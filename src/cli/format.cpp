@@ -198,4 +198,177 @@ nlohmann::json summaryJson(const Digest& d)
     return j;
 }
 
+int dominantStallReason(const LineDigest& l)
+{
+    int best = -1;
+    int64_t best_value = 0;
+    for (size_t i = 0; i < l.stallreasons.size(); ++i)
+        if (l.stallreasons[i] > best_value)
+        {
+            best_value = l.stallreasons[i];
+            best = static_cast<int>(i);
+        }
+    return best;
+}
+
+namespace
+{
+std::string stallReasonName(const Digest& d, const LineDigest& l)
+{
+    const int idx = dominantStallReason(l);
+    if (idx < 0) return "-";
+    if (static_cast<size_t>(idx) < d.stall_reason_names.size()) return d.stall_reason_names[idx];
+    return "reason_" + std::to_string(idx);
+}
+
+std::string typeName(const Digest& d, int type)
+{
+    const auto t = static_cast<size_t>(type);
+    if (t < d.type_names.size()) return d.type_names[t];
+    return "type_" + std::to_string(type);
+}
+} // namespace
+
+std::string renderHotspot(const Digest& d, const std::vector<HotspotRow>& rows)
+{
+    const auto t = totals(d);
+    std::vector<std::vector<std::string>> table;
+    for (const auto& r : rows)
+        table.push_back(
+            {r.index >= 0 ? std::to_string(r.index) : r.key,
+             r.label,
+             std::to_string(r.exposed()),
+             formatPercent(r.exposed(), t.total()),
+             std::to_string(r.total()),
+             std::to_string(r.stall),
+             std::to_string(r.idle),
+             std::to_string(r.hidden),
+             std::to_string(r.hitcount)}
+        );
+    return renderTable({"idx", "what", "exposed", "share", "total", "stall", "idle", "hidden", "hits"}, table);
+}
+
+nlohmann::json hotspotJson(const std::vector<HotspotRow>& rows)
+{
+    auto j = nlohmann::json::array();
+    for (const auto& r : rows)
+        j.push_back({
+            {"index",    r.index    },
+            {"key",      r.key      },
+            {"label",    r.label    },
+            {"exposed",  r.exposed()},
+            {"total",    r.total()  },
+            {"latency",  r.latency  },
+            {"stall",    r.stall    },
+            {"idle",     r.idle     },
+            {"hidden",   r.hidden   },
+            {"hitcount", r.hitcount }
+        });
+    return j;
+}
+
+std::string renderAsm(const Digest& d, const std::vector<LineDigest>& lines)
+{
+    std::vector<std::vector<std::string>> table;
+    for (const auto& l : lines)
+        table.push_back(
+            {std::to_string(l.index),
+             std::to_string(l.addr),
+             l.inst,
+             typeName(d, l.type),
+             std::to_string(l.hitcount),
+             std::to_string(l.exposed()),
+             std::to_string(l.total()),
+             std::to_string(l.issue()),
+             std::to_string(l.stall),
+             std::to_string(l.idle),
+             std::to_string(l.hidden()),
+             stallReasonName(d, l)}
+        );
+    return renderTable(
+        {"idx",
+         "addr",
+         "instruction",
+         "type",
+         "hits",
+         "exposed",
+         "total",
+         "issue",
+         "stall",
+         "idle",
+         "hidden",
+         "stall_reason"},
+        table
+    );
+}
+
+nlohmann::json asmJson(const Digest& d, const std::vector<LineDigest>& lines)
+{
+    auto j = nlohmann::json::array();
+    for (const auto& l : lines)
+        j.push_back({
+            {"index", l.index},
+            {"addr", l.addr},
+            {"inst", l.inst},
+            {"type", typeName(d, l.type)},
+            {"source", l.cppline},
+            {"hitcount", l.hitcount},
+            {"exposed", l.exposed()},
+            {"total", l.total()},
+            {"issue", l.issue()},
+            {"stall", l.stall},
+            {"idle", l.idle},
+            {"hidden", l.hidden()},
+            {"stall_reason", stallReasonName(d, l)},
+            {"stall_reasons", l.stallreasons}
+        });
+    return j;
+}
+
+std::string renderOccupancy(const Digest& d, int se)
+{
+    const std::vector<double>* series = nullptr;
+    std::string label = "all";
+    if (se < 0)
+        series = &d.occupancy.total;
+    else if (const auto it = d.occupancy.per_se.find(se); it != d.occupancy.per_se.end())
+    {
+        series = &it->second;
+        label = "SE" + std::to_string(se);
+    }
+
+    if (!series || series->empty())
+        return "no occupancy data for " + (se < 0 ? std::string("any SE") : "SE" + std::to_string(se)) + "\n";
+
+    const int64_t span = d.occupancy.t1 - d.occupancy.t0;
+    const double bin_width = d.occupancy.bins > 0 ? static_cast<double>(span) / d.occupancy.bins : 0.0;
+
+    std::vector<std::vector<std::string>> table;
+    for (size_t i = 0; i < series->size(); ++i)
+    {
+        char value[32];
+        std::snprintf(value, sizeof(value), "%.1f", (*series)[i]);
+        table.push_back({std::to_string(i), std::to_string(d.occupancy.t0 + static_cast<int64_t>(i * bin_width)), value}
+        );
+    }
+    return label + " concurrency over " + std::to_string(d.occupancy.bins) + " bins\n" +
+           renderTable({"bin", "t_start", "waves"}, table);
+}
+
+nlohmann::json occupancyJson(const Digest& d, int se)
+{
+    nlohmann::json j;
+    j["bins"] = d.occupancy.bins;
+    j["t0"] = d.occupancy.t0;
+    j["t1"] = d.occupancy.t1;
+    if (se < 0)
+        j["series"] = d.occupancy.total;
+    else if (const auto it = d.occupancy.per_se.find(se); it != d.occupancy.per_se.end())
+        j["series"] = it->second;
+    else
+        j["series"] = nlohmann::json::array();
+    j["se"] = se;
+    return j;
+}
+
 } // namespace rcv

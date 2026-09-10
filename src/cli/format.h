@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include "cli/digest.h"
+#include "cli/queries.h"
 
 namespace rcv
 {
@@ -32,4 +33,15 @@ std::string renderTable(const std::vector<std::string>& headers, const std::vect
 std::string formatPercent(int64_t part, int64_t whole);
 std::string renderSummary(const Digest& d);
 nlohmann::json summaryJson(const Digest& d);
+
+int dominantStallReason(const LineDigest& l);
+
+std::string renderHotspot(const Digest& d, const std::vector<HotspotRow>& rows);
+nlohmann::json hotspotJson(const std::vector<HotspotRow>& rows);
+
+std::string renderAsm(const Digest& d, const std::vector<LineDigest>& lines);
+nlohmann::json asmJson(const Digest& d, const std::vector<LineDigest>& lines);
+
+std::string renderOccupancy(const Digest& d, int se);
+nlohmann::json occupancyJson(const Digest& d, int se);
 } // namespace rcv

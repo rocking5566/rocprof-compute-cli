@@ -39,7 +39,11 @@ int usage()
 {
     std::cerr << "usage: rcv-cli <command> [options]\n"
                  "  analyze <trace_path> [-o digest.json] [--bins N]\n"
-                 "  summary [-d digest.json] [--json]\n";
+                 "  summary   [-d digest.json] [--json]\n"
+                 "  hotspot   [-d digest.json] [--by asm|source] "
+                 "[--sort exposed|total|stall|idle] [--top N] [--json]\n"
+                 "  asm       [-d digest.json] (--range A-B | --around N [--context N]) [--json]\n"
+                 "  occupancy [-d digest.json] [--se N] [--json]\n";
     return 2;
 }
 
@@ -143,6 +147,144 @@ int cmdSummary(const std::vector<std::string>& args)
         std::cout << rcv::renderSummary(digest);
     return 0;
 }
+
+int cmdHotspot(const std::vector<std::string>& args)
+{
+    std::string digest_path = "digest.json";
+    std::string by = "asm";
+    std::string sort = "exposed";
+    int top = 20;
+    bool as_json = false;
+
+    for (size_t i = 0; i < args.size(); ++i)
+    {
+        if (args[i] == "-d" && i + 1 < args.size())
+            digest_path = args[++i];
+        else if (args[i] == "--by" && i + 1 < args.size())
+            by = args[++i];
+        else if (args[i] == "--sort" && i + 1 < args.size())
+            sort = args[++i];
+        else if (args[i] == "--top" && i + 1 < args.size())
+            top = std::stoi(args[++i]);
+        else if (args[i] == "--json")
+            as_json = true;
+        else
+            return usage();
+    }
+
+    rcv::Digest digest;
+    std::string error;
+    if (!readDigest(digest_path, digest, error))
+    {
+        std::cerr << "error: " << error << "\n";
+        return 1;
+    }
+
+    try
+    {
+        const auto rows = rcv::hotspot(digest, rcv::parseGroupBy(by), rcv::parseSortKey(sort), top);
+        if (rows.empty() && by == "source")
+            std::cerr << "note: no source-attributed lines (" << digest.meta.lines_with_source << "/"
+                      << digest.meta.total_lines << "); the kernel was likely built without -g\n";
+        if (as_json)
+            std::cout << rcv::hotspotJson(rows).dump(2) << "\n";
+        else
+            std::cout << rcv::renderHotspot(digest, rows);
+    }
+    catch (const std::invalid_argument& e)
+    {
+        std::cerr << "error: " << e.what() << "\n";
+        return 2;
+    }
+    return 0;
+}
+
+int cmdAsm(const std::vector<std::string>& args)
+{
+    std::string digest_path = "digest.json";
+    int first = -1, last = -1, around = -1, context = 10;
+    bool as_json = false;
+
+    for (size_t i = 0; i < args.size(); ++i)
+    {
+        if (args[i] == "-d" && i + 1 < args.size())
+            digest_path = args[++i];
+        else if (args[i] == "--range" && i + 1 < args.size())
+        {
+            const std::string spec = args[++i];
+            const auto dash = spec.find('-', 1);
+            if (dash == std::string::npos)
+            {
+                std::cerr << "error: --range expects A-B\n";
+                return 2;
+            }
+            first = std::stoi(spec.substr(0, dash));
+            last = std::stoi(spec.substr(dash + 1));
+        }
+        else if (args[i] == "--around" && i + 1 < args.size())
+            around = std::stoi(args[++i]);
+        else if (args[i] == "--context" && i + 1 < args.size())
+            context = std::stoi(args[++i]);
+        else if (args[i] == "--json")
+            as_json = true;
+        else
+            return usage();
+    }
+
+    if (first < 0 && around < 0)
+    {
+        std::cerr << "error: asm needs --range A-B or --around N\n";
+        return 2;
+    }
+
+    rcv::Digest digest;
+    std::string error;
+    if (!readDigest(digest_path, digest, error))
+    {
+        std::cerr << "error: " << error << "\n";
+        return 1;
+    }
+
+    const auto lines = around >= 0 ? rcv::asmAround(digest, around, context) : rcv::asmRange(digest, first, last);
+    if (as_json)
+        std::cout << rcv::asmJson(digest, lines).dump(2) << "\n";
+    else
+        std::cout << rcv::renderAsm(digest, lines);
+    return 0;
+}
+
+int cmdOccupancy(const std::vector<std::string>& args)
+{
+    std::string digest_path = "digest.json";
+    int se = -1;
+    bool as_json = false;
+
+    for (size_t i = 0; i < args.size(); ++i)
+    {
+        if (args[i] == "-d" && i + 1 < args.size())
+            digest_path = args[++i];
+        else if (args[i] == "--se" && i + 1 < args.size())
+            se = std::stoi(args[++i]);
+        else if (args[i] == "--json")
+            as_json = true;
+        else
+            return usage();
+    }
+
+    rcv::Digest digest;
+    std::string error;
+    if (!readDigest(digest_path, digest, error))
+    {
+        std::cerr << "error: " << error << "\n";
+        return 1;
+    }
+
+    if (as_json)
+        std::cout << rcv::occupancyJson(digest, se).dump(2) << "\n";
+    else
+        std::cout << rcv::renderOccupancy(digest, se);
+    return 0;
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -155,6 +297,9 @@ int main(int argc, char* argv[])
 
     if (command == "analyze") return cmdAnalyze(rest);
     if (command == "summary") return cmdSummary(rest);
+    if (command == "hotspot") return cmdHotspot(rest);
+    if (command == "asm") return cmdAsm(rest);
+    if (command == "occupancy") return cmdOccupancy(rest);
 
     return usage();
 }
