@@ -40,7 +40,7 @@ namespace fs = std::filesystem;
 namespace rcv
 {
 
-LoadResult loadTrace(const std::string& input_path, DataStore& store)
+LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceFormat force)
 {
     LoadResult result;
 
@@ -52,6 +52,10 @@ LoadResult loadTrace(const std::string& input_path, DataStore& store)
     }
 
     InputInfo info = detectInput(input_path);
+    if (force == ForceFormat::JsonDir)
+        info.type = InputType::JSON_DIR;
+    else if (force == ForceFormat::AttFiles)
+        info.type = InputType::ATT_FILES;
     if (info.type == InputType::UNKNOWN)
     {
         result.error = "could not determine input format for: " + input_path;
@@ -103,8 +107,21 @@ LoadResult loadTrace(const std::string& input_path, DataStore& store)
             case InputType::ATT_FILES:
             {
 #ifdef RCV_HAS_TRACE_DECODER
+                if (info.att_file_info.size() != info.att_files.size())
+                {
+                    info.att_file_info.clear();
+                    for (const auto& p : info.att_files) info.att_file_info.push_back(parseAttFilename(p));
+                }
+
                 TraceDecoderEmitter emitter(info, dispatcher, store);
+                emitter.run();
                 for (const auto& err : emitter.parseErrors()) result.warnings.push_back(err);
+                if (store.code.empty())
+                {
+                    result.error = "decoder produced no code; check that the .out code-object files "
+                                   "sit alongside the .att files";
+                    return result;
+                }
 #else
                 result.error = "this build has no trace decoder; rebuild with TRACE_DECODER_ROOT";
                 return result;

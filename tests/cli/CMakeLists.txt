@@ -66,3 +66,14 @@ target_compile_definitions(synthetic_test PRIVATE
     RCV_CLI_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 target_link_libraries(synthetic_test GTest::gtest_main rcv_core)
 add_test(NAME synthetic_test COMMAND synthetic_test)
+
+if(RCV_HAS_TRACE_DECODER)
+    add_executable(att_path_test att_path_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest_builder.cpp)
+    target_include_directories(att_path_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
+    target_link_libraries(att_path_test GTest::gtest_main rcv_core)
+    add_test(NAME att_path_test COMMAND att_path_test)
+    set_tests_properties(att_path_test PROPERTIES ENVIRONMENT
+        "RCV_CLI_TEST_TRACE=$ENV{RCV_CLI_TEST_TRACE};RCV_CLI_TEST_ATT_DIR=$ENV{RCV_CLI_TEST_ATT_DIR}")
+endif()

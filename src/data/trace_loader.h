@@ -37,10 +37,17 @@ struct LoadResult
     std::vector<std::string> warnings;
 };
 
+enum class ForceFormat
+{
+    Auto,
+    JsonDir,
+    AttFiles
+};
+
 /// Headless trace load. Detects the input format from `input_path`, populates
 /// `store`, and always loads every wave — unlike MainWindow, which gates full
 /// wave loading behind a 200 MB budget and would silently skip hidden-latency
 /// analysis on large captures.
-LoadResult loadTrace(const std::string& input_path, DataStore& store);
+LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceFormat force = ForceFormat::Auto);
 
 } // namespace rcv

@@ -38,7 +38,7 @@ namespace
 int usage()
 {
     std::cerr << "usage: rcv-cli <command> [options]\n"
-                 "  analyze <trace_path> [-o digest.json] [--bins N]\n"
+                 "  analyze <trace_path> [-o digest.json] [--bins N] [--format json|att]\n"
                  "  summary   [-d digest.json] [--json]\n"
                  "  hotspot   [-d digest.json] [--by asm|source] "
                  "[--sort exposed|total|stall|idle] [--top N] [--json]\n"
@@ -74,18 +74,29 @@ int cmdAnalyze(const std::vector<std::string>& args)
     std::string trace_path = args[0];
     std::string out_path = "digest.json";
     int bins = 200;
+    rcv::ForceFormat force = rcv::ForceFormat::Auto;
     for (size_t i = 1; i < args.size(); ++i)
     {
         if (args[i] == "-o" && i + 1 < args.size())
             out_path = args[++i];
         else if (args[i] == "--bins" && i + 1 < args.size())
             bins = std::stoi(args[++i]);
+        else if (args[i] == "--format" && i + 1 < args.size())
+        {
+            const std::string f = args[++i];
+            if (f == "json")
+                force = rcv::ForceFormat::JsonDir;
+            else if (f == "att")
+                force = rcv::ForceFormat::AttFiles;
+            else
+                return usage();
+        }
         else
             return usage();
     }
 
     DataStore store;
-    const auto load = rcv::loadTrace(trace_path, store);
+    const auto load = rcv::loadTrace(trace_path, store, force);
     if (!load.ok)
     {
         std::cerr << "error: " << load.error << "\n";
