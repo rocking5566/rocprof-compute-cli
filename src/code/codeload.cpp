@@ -46,13 +46,17 @@ void CodeData::ApplyCustomType(const std::shared_ptr<Line>& line)
         if (line->inst.find(custom_token) == 0) line->custom_type = custom_type;
 }
 
-std::vector<CodeData> CodeData::LoadCode(const std::string& path)
+std::vector<CodeData> CodeData::LoadCode(const std::string& path, bool strict)
 {
     std::unique_lock<std::mutex> lk(code_mutex);
 
-    if (!cache.empty() && loaded_cache == path) return cache;
+    if (!strict && !cache.empty() && loaded_cache == path) return cache;
 
     JsonRequest coderequest(path);
+
+    if (strict && (!coderequest.bValid || !coderequest.data.contains("code") ||
+                   !coderequest.data.at("code").is_array()))
+        throw std::runtime_error("invalid code.json: " + path);
 
     if (coderequest.fail() || coderequest.bad()) throw std::exception{};
 
@@ -113,6 +117,7 @@ std::vector<CodeData> CodeData::LoadCode(const std::string& path)
         }
         catch (const std::exception& e)
         {
+            if (strict) throw std::runtime_error("code.json row " + std::to_string(built.size()) + ": " + e.what());
             if (row_failures++ == 0) std::cerr << "Warning: code.json row skipped: " << e.what() << std::endl;
         }
     }

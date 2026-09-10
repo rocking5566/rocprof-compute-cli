@@ -49,6 +49,12 @@ gigabytes and tens of seconds. `analyze` pays that cost once and writes a **dige
 few hundred KB holding per-instruction aggregates, binned occupancy and a wave index. Every
 query command reads only the digest and returns in milliseconds.
 
+`analyze` requires valid GPU metadata, a complete wave manifest and code listing, and every
+listed wave to load successfully. Decode or hidden-latency analysis failures return `1`
+without publishing a digest. A capture with no waves is reported as empty/unsupported;
+a valid wave with zero hidden latency is accepted. Source snapshots, counters and markers
+remain optional.
+
 ```bash
 # once per trace (~28 s for a 1 GB capture -> ~400 KB digest)
 ./build/rcv-cli analyze <ui_output_agent_*_dispatch_*> -o digest.json

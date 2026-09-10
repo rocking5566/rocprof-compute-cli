@@ -321,10 +321,27 @@ bool analyzeScoped(DataStore& store, int SE, int SIMD)
 
 } // namespace
 
-bool analyze(DataStore& store)
+bool analyze(DataStore& store, bool strict)
 {
     store.hidden_latency_by_line.clear();
     store.hidden_latency_analyzed = false;
+
+    if (strict)
+    {
+        bool complete = true;
+        size_t count = 0;
+        try
+        {
+            store.forEachWave([&](const DataStore::WaveCoordinate&, const WaveEntry& entry)
+            {
+                auto wave = store.getWave(entry);
+                complete = complete && wave && wave->load_complete;
+                ++count;
+            });
+        }
+        catch (...) { return false; }
+        if (!complete || count == 0) return false;
+    }
 
     for (const auto& [se, simd_map] : store.wave_hierarchy)
         for (const auto& [simd, _] : simd_map)

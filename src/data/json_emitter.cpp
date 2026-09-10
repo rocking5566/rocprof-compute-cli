@@ -284,9 +284,9 @@ private:
 } // namespace
 
 JsonRecordEmitter::JsonRecordEmitter(
-    const std::string& dir, RecordDispatcher& disp, DataStore& st, WaveStateLoadPolicy load_policy
+    const std::string& dir, RecordDispatcher& disp, DataStore& st, WaveStateLoadPolicy load_policy, bool strict
 ) :
-ui_dir(dir), dispatcher(disp), store(st), wave_state_load_policy(std::move(load_policy))
+ui_dir(dir), dispatcher(disp), store(st), wave_state_load_policy(std::move(load_policy)), strict(strict)
 {
     if (!ui_dir.empty() && ui_dir.back() != '/') ui_dir.push_back('/');
 }
@@ -316,6 +316,9 @@ void JsonRecordEmitter::emitMetadata()
     try
     {
         JsonRequest file(ui_dir + "filenames.json", false);
+        if (strict && (!file.bValid || !file.data.contains("gfxip") ||
+                       !file.data.at("gfxip").is_number_integer() || file.data.at("gfxip").get<int>() <= 0))
+            throw std::runtime_error("filenames.json: missing or invalid gfxip metadata");
         if (!file.bValid) return;
 
         auto& data = file.data;
@@ -347,6 +350,7 @@ void JsonRecordEmitter::emitMetadata()
     }
     catch (std::exception& e)
     {
+        if (strict) throw;
         std::cout << "Warning: Failed to load metadata: " << e.what() << std::endl;
     }
 }
@@ -356,9 +360,38 @@ void JsonRecordEmitter::emitWaveHierarchy()
     try
     {
         JsonRequest file(ui_dir + "filenames.json", false);
+        if (strict && (!file.bValid || !file.data.contains("wave_filenames") ||
+                       !file.data.at("wave_filenames").is_object()))
+            throw std::runtime_error("filenames.json: missing or invalid wave_filenames");
         if (!file.bValid || !file.data.contains("wave_filenames")) return;
 
         auto& wave_filenames = file.data["wave_filenames"];
+
+        // Validate the whole hierarchy before emitting anything. The GUI keeps
+        // its permissive loader; CLI input must not silently lose a subtree.
+        if (strict)
+        {
+            std::function<void(const nlohmann::json&, int)> validate = [&](const nlohmann::json& node, int depth)
+            {
+                if (depth == 4)
+                {
+                    if (!node.is_array() || node.size() < 3 || !node[0].is_string() ||
+                        node[0].get<std::string>().empty() || !node[1].is_number_integer() ||
+                        !node[2].is_number_integer() || node[2].get<int64_t>() < node[1].get<int64_t>())
+                        throw std::runtime_error("filenames.json: invalid wave entry");
+                    return;
+                }
+                if (!node.is_object()) throw std::runtime_error("filenames.json: invalid wave hierarchy");
+                for (const auto& [key, child] : node.items())
+                {
+                    int value;
+                    if (!parseNonNegativeIntKey(key, value))
+                        throw std::runtime_error("filenames.json: invalid wave coordinate " + key);
+                    validate(child, depth + 1);
+                }
+            };
+            validate(wave_filenames, 0);
+        }
 
         for (auto& [se_name, se_data] : wave_filenames.items())
         {
@@ -384,6 +417,7 @@ void JsonRecordEmitter::emitWaveHierarchy()
     }
     catch (std::exception& e)
     {
+        if (strict) throw;
         std::cout << "Warning: Failed to load wave hierarchy: " << e.what() << std::endl;
     }
 }
@@ -623,10 +657,11 @@ void JsonRecordEmitter::emitCode()
     const std::string path = ui_dir + "code.json";
     try
     {
-        store.code = CodeData::LoadCode(path);
+        store.code = CodeData::LoadCode(path, strict);
     }
     catch (const std::exception& e)
     {
+        if (strict) throw;
         std::cerr << "Warning: code.json: " << path << ": " << e.what() << std::endl;
     }
     catch (...)

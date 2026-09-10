@@ -317,6 +317,7 @@ WaveInstance::WaveInstance(const std::string& _path, int64_t time_offset) : path
     nlohmann::json& data = json.data;
 
     auto& instructions = data["wave"]["instructions"];
+    if (!instructions.is_array()) return;
     int wave_id = data["wave"]["id"];
 
     bool isIdleInfo = true;
@@ -418,6 +419,7 @@ WaveInstance::WaveInstance(const std::string& _path, int64_t time_offset) : path
     }
 
     SetMipN();
+    load_complete = !code.empty();
 }
 
 WaveInstance::WaveInstance(const wave_record_t& rec, const std::vector<CodeData>& code_data) : path(rec.id)
@@ -476,6 +478,7 @@ WaveInstance::WaveInstance(const wave_record_t& rec, const std::vector<CodeData>
     if (rec.occupancy_flags != 0) wave_info.push_back({"flags", rec.occupancy_flags, 0});
 
     SetMipN();
+    load_complete = !code.empty();
 }
 
 std::shared_ptr<WaveInstance> WaveInstance::GetFromRecord(

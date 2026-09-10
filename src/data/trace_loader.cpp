@@ -100,7 +100,7 @@ LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceForma
                 // The GUI passes a callback that consults AppConfig and mirrors
                 // the answer into a checkbox. The CLI always loads wave states:
                 // hidden-latency analysis needs them, and there is no UI to toggle.
-                JsonRecordEmitter emitter(store.ui_dir, dispatcher, store, [](const DataStore&) { return true; });
+                JsonRecordEmitter emitter(store.ui_dir, dispatcher, store, [](const DataStore&) { return true; }, true);
                 emitter.run();
                 break;
             }
@@ -115,7 +115,11 @@ LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceForma
 
                 TraceDecoderEmitter emitter(info, dispatcher, store);
                 emitter.run();
-                for (const auto& err : emitter.parseErrors()) result.warnings.push_back(err);
+                if (!emitter.parseErrors().empty())
+                {
+                    result.error = "ATT decode failed: " + emitter.parseErrors().front();
+                    return result;
+                }
                 if (store.code.empty())
                 {
                     result.error = "decoder produced no code; check that the .out code-object files "
@@ -132,6 +136,22 @@ LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceForma
                 result.error = "unsupported input format for the CLI (only ui_output "
                                "directories and .att files are supported)";
                 return result;
+        }
+
+        // Load once into the shared wave cache, so later analysis cannot mistake
+        // a manifest count for successfully loaded data. Empty instructions are valid.
+        size_t waves = 0;
+        store.forEachWave([&](const DataStore::WaveCoordinate&, const WaveEntry& entry)
+        {
+            auto wave = store.getWave(entry);
+            if (!wave || !wave->load_complete)
+                throw std::runtime_error("could not load complete wave: " + entry.id);
+            ++waves;
+        });
+        if (waves == 0)
+        {
+            result.error = "input contains no waves; empty or unsupported thread-trace capture";
+            return result;
         }
     }
     catch (const std::exception& e)

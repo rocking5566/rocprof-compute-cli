@@ -49,7 +49,7 @@ struct HiddenLatency
     int64_t total() const { return idle + stall + issue; }
 };
 
-bool analyze(DataStore& store);
+bool analyze(DataStore& store, bool strict = false);
 void applyToAsm(const DataStore& store);
 
 } // namespace HiddenLatencyAnalysis

@@ -28,6 +28,7 @@
 #include "data/datastore.h"
 #include "data/shaderdata.h"
 #include "data/trace_loader.h"
+#include "test_support.h"
 
 namespace
 {
@@ -123,4 +124,24 @@ TEST(AttPath, LoadsWavesAndOccupancy)
     const auto d = digestOf(att_dir, rcv::ForceFormat::AttFiles);
     EXPECT_GT(d.meta.wave_count, 0);
     EXPECT_GT(d.meta.se_count, 0);
+}
+
+TEST(AttPath, RejectsPartialDecode)
+{
+    const char* att_dir = std::getenv("RCV_CLI_TEST_ATT_DIR");
+    if (!att_dir || !*att_dir) GTEST_SKIP() << "RCV_CLI_TEST_ATT_DIR not set";
+    cli_test::TempDir tmp;
+    for (const auto& entry : std::filesystem::directory_iterator(att_dir))
+        std::filesystem::create_symlink(entry.path(), tmp.path / entry.path().filename());
+    cli_test::write(tmp.path / "999_29410_shader_engine_99_19.att", "broken ATT input");
+    ASSERT_FALSE(cli_test::binary().empty());
+    const auto cli = cli_test::run({cli_test::binary(), "analyze", tmp.path.string(), "--format", "att",
+                                    "-o", (tmp.path / "digest.json").string()});
+    EXPECT_EQ(cli.status, 1) << cli.error;
+    EXPECT_EQ(cli.signal, 0);
+    EXPECT_FALSE(std::filesystem::exists(tmp.path / "digest.json"));
+    DataStore store;
+    const auto load = rcv::loadTrace(tmp.path.string(), store, rcv::ForceFormat::AttFiles);
+    EXPECT_FALSE(load.ok);
+    EXPECT_NE(load.error.find("99"), std::string::npos) << load.error;
 }

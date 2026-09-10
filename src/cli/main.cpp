@@ -113,8 +113,11 @@ int cmdAnalyze(const std::vector<std::string>& args)
         return 1;
     }
 
-    if (!HiddenLatencyAnalysis::analyze(store))
-        std::cerr << "warning: hidden latency analysis failed; hidden columns will be zero\n";
+    if (!HiddenLatencyAnalysis::analyze(store, true))
+    {
+        std::cerr << "error: hidden latency analysis failed\n";
+        return 1;
+    }
 
     const auto digest = rcv::buildDigest(store, trace_path, bins);
 

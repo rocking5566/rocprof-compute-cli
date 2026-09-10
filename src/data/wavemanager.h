@@ -77,6 +77,8 @@ struct WaveInstance : public TokenGroup
     std::vector<WaveInfo> wave_info;
     std::string path;
     int cu = -1;
+    // A valid empty instruction array differs from an unreadable/partial wave.
+    bool load_complete = false;
 
     std::map<int, std::vector<int64_t>> line_to_clock{};
 

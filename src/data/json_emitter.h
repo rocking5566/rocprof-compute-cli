@@ -36,7 +36,8 @@ public:
         const std::string& ui_dir,
         RecordDispatcher& dispatcher,
         DataStore& store,
-        WaveStateLoadPolicy wave_state_load_policy = {}
+        WaveStateLoadPolicy wave_state_load_policy = {},
+        bool strict = false
     );
     void run();
     void runOccupancyOnlyForTests();
@@ -58,4 +59,5 @@ private:
     RecordDispatcher& dispatcher;
     DataStore& store;
     WaveStateLoadPolicy wave_state_load_policy;
+    bool strict;
 };

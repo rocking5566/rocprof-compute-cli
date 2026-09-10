@@ -29,61 +29,48 @@
 #include <string>
 #include "cli/digest.h"
 #include "json/include/nlohmann/json.hpp"
+#include "test_support.h"
+
+using cli_test::binary;
+using cli_test::run;
 
 namespace
 {
-struct RunResult
-{
-    int status = -1;
-    std::string output;
-};
-
-RunResult run(const std::string& command)
-{
-    RunResult r;
-    std::array<char, 4096> buf{};
-    FILE* pipe = popen((command + " 2>&1").c_str(), "r");
-    if (!pipe) return r;
-    while (std::fgets(buf.data(), static_cast<int>(buf.size()), pipe)) r.output += buf.data();
-    r.status = pclose(pipe);
-    return r;
-}
-
-std::string binary()
-{
-    const char* env = std::getenv("RCV_CLI_BINARY");
-    return env ? env : "";
-}
-
 std::string trace()
 {
     const char* env = std::getenv("RCV_CLI_TEST_TRACE");
     return env ? env : "";
 }
 
-std::string digestPath() { return "/tmp/rcv-smoke-digest.json"; }
 } // namespace
 
 TEST(Smoke, AnalyzeThenQueryChain)
 {
     if (binary().empty() || trace().empty()) GTEST_SKIP() << "RCV_CLI_BINARY / RCV_CLI_TEST_TRACE not set";
 
+    cli_test::TempDir tmp;
+    const auto digest_path = (tmp.path / "digest.json").string();
+
     const auto start = std::chrono::steady_clock::now();
-    const auto analyze = run(binary() + " analyze " + trace() + " -o " + digestPath());
+    const auto analyze = run({binary(), "analyze", trace(), "-o", digest_path});
     const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start);
 
-    ASSERT_EQ(analyze.status, 0) << analyze.output;
+    ASSERT_EQ(analyze.signal, 0) << analyze.error;
+    ASSERT_EQ(analyze.status, 0) << analyze.error;
     std::cerr << "[ TIMING   ] analyze took " << elapsed.count() << "s\n";
 
-    for (const std::string& cmd :
-         {std::string("summary"), std::string("hotspot --top 5"), std::string("occupancy --se 0")})
+    for (auto args : std::vector<std::vector<std::string>>{
+             {"summary"}, {"hotspot", "--top", "5"}, {"occupancy", "--se", "0"}})
     {
-        const auto r = run(binary() + " " + cmd + " -d " + digestPath());
-        EXPECT_EQ(r.status, 0) << cmd << ": " << r.output;
-        EXPECT_FALSE(r.output.empty()) << cmd;
+        args.insert(args.begin(), binary());
+        args.insert(args.end(), {"-d", digest_path});
+        const auto r = run(args);
+        EXPECT_EQ(r.signal, 0) << r.error;
+        EXPECT_EQ(r.status, 0) << r.error;
+        EXPECT_FALSE(r.output.empty());
     }
 
-    const auto around = run(binary() + " asm -d " + digestPath() + " --around 100 --context 2");
+    const auto around = run({binary(), "asm", "-d", digest_path, "--around", "100", "--context", "2"});
     EXPECT_EQ(around.status, 0) << around.output;
     EXPECT_NE(around.output.find("instruction"), std::string::npos) << around.output;
 }
@@ -95,9 +82,13 @@ TEST(Smoke, HiddenLatencyIsPresentInTheProducedDigest)
 {
     if (binary().empty() || trace().empty()) GTEST_SKIP() << "RCV_CLI_BINARY / RCV_CLI_TEST_TRACE not set";
 
-    ASSERT_EQ(run(binary() + " analyze " + trace() + " -o " + digestPath()).status, 0);
+    cli_test::TempDir tmp;
+    const auto digest_path = (tmp.path / "digest.json").string();
+    const auto result = run({binary(), "analyze", trace(), "-o", digest_path});
+    ASSERT_EQ(result.signal, 0) << result.error;
+    ASSERT_EQ(result.status, 0) << result.error;
 
-    std::ifstream in(digestPath());
+    std::ifstream in(digest_path);
     ASSERT_TRUE(in.is_open());
     const auto digest = rcv::fromJson(nlohmann::json::parse(in));
 
@@ -107,11 +98,14 @@ TEST(Smoke, HiddenLatencyIsPresentInTheProducedDigest)
     EXPECT_GT(hidden, 0) << "hidden latency is entirely zero";
 }
 
-TEST(Smoke, RejectsBadArgumentsWithNonZeroExit)
+TEST(Smoke, DistinguishesUsageAndRuntimeExitCodes)
 {
     if (binary().empty()) GTEST_SKIP() << "RCV_CLI_BINARY not set";
 
-    EXPECT_NE(run(binary() + " hotspot -d " + digestPath() + " --sort bogus").status, 0);
-    EXPECT_NE(run(binary() + " asm -d " + digestPath()).status, 0);
-    EXPECT_NE(run(binary() + " summary -d /nonexistent/digest.json").status, 0);
+    cli_test::TempDir tmp;
+    const auto digest_path = (tmp.path / "digest.json").string();
+    cli_test::write(digest_path, rcv::toJson(rcv::Digest{}).dump());
+    EXPECT_EQ(run({binary(), "hotspot", "-d", digest_path, "--sort", "bogus"}).status, 2);
+    EXPECT_EQ(run({binary(), "asm", "-d", digest_path}).status, 2);
+    EXPECT_EQ(run({binary(), "summary", "-d", (tmp.path / "missing.json").string()}).status, 1);
 }
