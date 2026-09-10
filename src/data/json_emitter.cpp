@@ -23,6 +23,7 @@
 #include "json_emitter.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <iterator>
 #include <map>
@@ -385,7 +386,7 @@ void JsonRecordEmitter::emitWaveHierarchy()
                 for (const auto& [key, child] : node.items())
                 {
                     int value;
-                    if (!parseNonNegativeIntKey(key, value))
+                    if (!parseNonNegativeIntKey(key, value) || std::to_string(value) != key)
                         throw std::runtime_error("filenames.json: invalid wave coordinate " + key);
                     validate(child, depth + 1);
                 }
@@ -463,6 +464,9 @@ void JsonRecordEmitter::emitOccupancy()
     try
     {
         JsonRequest file(ui_dir + "occupancy.json", false);
+        if (strict && std::filesystem::exists(ui_dir + "occupancy.json") &&
+            (!file.bValid || !file.data.is_object()))
+            throw std::runtime_error("invalid occupancy.json");
         if (!file.bValid) return;
 
         // Dispatch names
@@ -478,14 +482,18 @@ void JsonRecordEmitter::emitOccupancy()
 
         for (auto& [se_name, array] : file.data.items())
         {
-            if (!array.is_array() || array.empty()) continue;
-
             int se = -1;
             if (!parseNonNegativeIntKey(se_name, se)) continue;
+            if (strict && !array.is_array()) throw std::runtime_error("invalid occupancy series: " + se_name);
+            if (!array.is_array() || array.empty()) continue;
 
             for (auto& v : array)
             {
-                if (!v.is_array() || v.size() < 6) continue;
+                if (!v.is_array() || v.size() < 6)
+                {
+                    if (strict) throw std::runtime_error("incomplete occupancy row: " + se_name);
+                    continue;
+                }
 
                 occupancy_record_t rec{};
                 rec.time = v[0].get<int64_t>();
@@ -516,6 +524,7 @@ void JsonRecordEmitter::emitOccupancy()
     }
     catch (std::exception& e)
     {
+        if (strict) throw;
         std::cout << "Warning: Failed to load occupancy: " << e.what() << std::endl;
     }
 }

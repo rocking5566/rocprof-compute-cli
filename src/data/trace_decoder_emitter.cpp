@@ -931,6 +931,13 @@ void TraceDecoderEmitter::parseATTFiles()
 
                 std::vector<uint8_t> buffer(file_size);
                 file.read(reinterpret_cast<char*>(buffer.data()), file_size);
+                if (!file)
+                {
+                    addParseError("SE" + std::to_string(se) + " (" + path + "): incomplete ATT read");
+                    inflight_bytes -= file_size;
+                    semaphore.release();
+                    return;
+                }
                 file.close();
 
                 // Set up per-SE parse context

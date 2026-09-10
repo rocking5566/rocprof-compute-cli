@@ -271,3 +271,29 @@ TEST_F(CliRegression, WaveDigestPreservesKnownCuAndLeavesUnknownCuUnset)
         EXPECT_EQ(actual.end, 1000);
     }
 }
+
+TEST_F(CliRegression, RejectsWaveReferencingMissingCodeLine)
+{
+    auto wave = json::parse(read(trace / "se0_sm0_sl0_wv0.json"));
+    wave["wave"]["instructions"][0][4] = 999;
+    write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+    expectFailure();
+}
+
+TEST_F(CliRegression, RejectsManifestCoordinatesThatWouldOverwriteAWave)
+{
+    auto manifest = json::parse(read(trace / "filenames.json"));
+    manifest["wave_filenames"]["00"] = manifest["wave_filenames"]["0"];
+    manifest["wave_filenames"]["0"]["0"]["0"]["0"][0] = "missing.json";
+    write(trace / "filenames.json", manifest.dump());
+    expectFailure();
+}
+
+TEST_F(CliRegression, RejectsMalformedOccupancyWhenPresent)
+{
+    for (const auto& contents : {std::string("{"), std::string(R"({"0":[[100,1]]})")})
+    {
+        write(trace / "occupancy.json", contents);
+        expectFailure();
+    }
+}

@@ -248,6 +248,7 @@ void WaveInstance::appendTokenWithSlotBump(
 
 void WaveInstance::populateExecMetadata(int wave_id, bool isIdleInfo)
 {
+    load_complete = !code.empty() && wave_end >= wave_begin;
     std::vector<int> code_line_map;
     for (size_t i = 0; i < code.size(); i++)
     {
@@ -267,6 +268,7 @@ void WaveInstance::populateExecMetadata(int wave_id, bool isIdleInfo)
 
         if (token.code_line < 0 || (size_t) token.code_line >= code_line_map.size())
         {
+            load_complete = false;
             thrownLine = token.code_line;
             prev_token_clock = token.clock + token.cycles;
             continue;
@@ -275,6 +277,7 @@ void WaveInstance::populateExecMetadata(int wave_id, bool isIdleInfo)
         try
         {
             CodeData& _code = code.at(code_line_map.at(token.code_line));
+            if (_code.line->index != token.code_line) load_complete = false;
             if (_code.exec == nullptr) _code.exec = std::make_unique<CodeData::Exec>(wave_id);
             token.setIteration(_code.exec->latency.size());
             _code.exec->clock.push_back(token.clock);
@@ -290,6 +293,7 @@ void WaveInstance::populateExecMetadata(int wave_id, bool isIdleInfo)
         }
         catch (std::out_of_range& e)
         {
+            load_complete = false;
             RCV_LOG();
             if (token.code_line != -1) thrownLine = token.code_line;
         }
@@ -419,7 +423,6 @@ WaveInstance::WaveInstance(const std::string& _path, int64_t time_offset) : path
     }
 
     SetMipN();
-    load_complete = !code.empty();
 }
 
 WaveInstance::WaveInstance(const wave_record_t& rec, const std::vector<CodeData>& code_data) : path(rec.id)
@@ -478,7 +481,6 @@ WaveInstance::WaveInstance(const wave_record_t& rec, const std::vector<CodeData>
     if (rec.occupancy_flags != 0) wave_info.push_back({"flags", rec.occupancy_flags, 0});
 
     SetMipN();
-    load_complete = !code.empty();
 }
 
 std::shared_ptr<WaveInstance> WaveInstance::GetFromRecord(
