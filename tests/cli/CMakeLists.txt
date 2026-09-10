@@ -34,3 +34,10 @@ add_executable(occupancy_test occupancy_test.cpp
 target_include_directories(occupancy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 target_link_libraries(occupancy_test GTest::gtest_main rcv_core)
 add_test(NAME occupancy_test COMMAND occupancy_test)
+
+add_executable(queries_test queries_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/queries.cpp)
+target_include_directories(queries_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
+target_link_libraries(queries_test GTest::gtest_main rcv_core)
+add_test(NAME queries_test COMMAND queries_test)
