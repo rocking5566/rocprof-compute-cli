@@ -238,16 +238,29 @@ std::string typeName(const Digest& d, int type)
     if (t < d.type_names.size()) return d.type_names[t];
     return "type_" + std::to_string(type);
 }
+// Source keys are whole demangled signatures running to thousands of
+// characters. Printing one unabridged costs more context than the rest of the
+// report put together, which defeats the point of the tool.
+constexpr size_t kMaxLabel = 70;
+
+std::string abbreviate(const std::string& s)
+{
+    if (s.size() <= kMaxLabel) return s;
+    return s.substr(0, kMaxLabel - 3) + "...";
+}
 } // namespace
 
 std::string renderHotspot(const Digest& d, const std::vector<HotspotRow>& rows)
 {
     const auto t = totals(d);
     std::vector<std::vector<std::string>> table;
+    size_t ordinal = 0;
     for (const auto& r : rows)
+        // Grouped by source there is no ASM index and the key *is* the label,
+        // so show a row ordinal instead of repeating the signature twice.
         table.push_back(
-            {r.index >= 0 ? std::to_string(r.index) : r.key,
-             r.label,
+            {r.index >= 0 ? std::to_string(r.index) : std::to_string(ordinal++),
+             abbreviate(r.label),
              std::to_string(r.exposed()),
              formatPercent(r.exposed(), t.total()),
              std::to_string(r.total()),
