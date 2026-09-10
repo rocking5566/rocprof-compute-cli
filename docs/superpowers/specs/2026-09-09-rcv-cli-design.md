@@ -59,17 +59,24 @@ Three translation units left `rcv_core` because nothing in it reaches them:
 `config/appconfig.cpp` (GUI settings persistence), `data/marker_colors.cpp`, and
 `analysis/annotation.cpp`.
 
-Members are the data-layer sources already proven to build headlessly by
-`tests/att/CMakeLists.txt`:
+Members (see `cmake/RcvCore.cmake` for the authoritative list):
 
-- `src/data/*.cpp` including `src/data/waitcnt/*.cpp`
-- `src/analysis/*.cpp`
+- `src/data/*.cpp` including `src/data/waitcnt/*.cpp`, less `marker_colors.cpp`
+- `src/analysis/*.cpp`, less `annotation.cpp`
 - `src/code/codeload.cpp`
-- `src/config/*.cpp`
-- `src/wave/othersimd.cpp`
-- `src/util/custom_layouts.cpp`, `src/util/jsonrequest.cpp`
+- `src/config/config.cpp` (not `appconfig.cpp`)
+- `src/wave/othersimd.cpp`, `src/wave/token.cpp`
+- `src/util/jsonrequest.cpp`, `src/util/memtracker.cpp`
 
-Four changes are required to make this compile without Qt Widgets:
+Note `src/util/custom_layouts.cpp` is **not** a member: it is Qt Widgets layout code. It was
+listed here in an earlier revision, inherited from `tests/att/CMakeLists.txt`, which links
+`Qt6::Widgets` precisely because of it.
+
+The four changes below were the ones identified up front. Executing them surfaced eight more,
+each visible only once the previous was fixed — `data/waitcnt/analysis.h` depending on
+`Canvas::WaitList`, a dead `<QPushButton>` in `wave/token.h`, `MemTracker::count` being defined
+inside `custom_layouts.cpp`, and so on. Commit `e69ebd0` lists them all. Treat this list as a
+starting point rather than a complete inventory:
 
 1. **Break `wavemanager.h` → `graphics/canvas.h`.** `WaveInstance` pulls in the whole canvas
    header solely for `std::vector<Canvas::WaitList> waitcnt` (`wavemanager.h:31`,
