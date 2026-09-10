@@ -23,11 +23,11 @@
 #include "config.hpp"
 #ifdef RCV_BUILD_GUI
 #include <QApplication>
-#endif
 #include <QDebug>
 #include <QFile>
 #include <QPalette>
 #include <QTextStream>
+#endif
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -39,6 +39,7 @@
 
 bool bDarkTheme = false;
 
+#ifdef RCV_BUILD_GUI
 QColor StyleColor::ToColor(const std::string& style)
 {
     assert(style.size() == 7);
@@ -47,6 +48,7 @@ QColor StyleColor::ToColor(const std::string& style)
     auto getval = [&style](int pos) { return std::stoi(style.substr(pos, 2), 0, 16); };
     return QColor(getval(1), getval(3), getval(5));
 }
+#endif
 
 static void addpair(nlohmann::json& json, const char* a, const char* b)
 {
@@ -66,6 +68,7 @@ public:
     std::vector<StyleColor> colors;
 };
 
+#ifdef RCV_BUILD_GUI
 namespace WindowColors
 {
 QPalette& getLightPalette()
@@ -315,20 +318,26 @@ const QColor& UtilizationBarColorBg()
 QColor textColor() { return bDarkTheme ? Qt::white : Qt::black; }
 QColor reverseTextColor() { return bDarkTheme ? Qt::black : Qt::white; }
 }; // namespace WindowColors
+#endif
+
 
 namespace Config
 {
+#ifdef RCV_BUILD_GUI
 const QColor& StallColor()
 {
     static auto color = QColor(192, 0, 0);
     return color;
 }
+#endif
 
+#ifdef RCV_BUILD_GUI
 const QColor& IssueColor()
 {
     static auto color = QColor(0, 160, 0);
     return color;
 }
+#endif
 
 const std::vector<StyleColor>& StateColors()
 {
@@ -552,6 +561,7 @@ const std::vector<std::pair<std::string, int>> CustomTokens()
     return replace;
 }
 
+#ifdef RCV_BUILD_GUI
 const QColor& PlotColors(int index)
 {
     static std::vector<QColor> colors = {
@@ -580,9 +590,12 @@ const QColor& PlotColors(int index)
 
     return colors.at(index % colors.size());
 }
+#endif
+#ifdef RCV_BUILD_GUI
 const QColor& HiddenLatencyColor()
 {
     static QColor color(0, 127, 255, 127);
     return color;
 }
+#endif
 }; // namespace Config

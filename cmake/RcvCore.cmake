@@ -12,14 +12,9 @@
 
 include_guard(GLOBAL)
 
-get_filename_component(RCV_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+find_package(Threads REQUIRED)
 
-# Discover Qt here rather than relying on the caller. The root CMakeLists runs
-# find_package(Qt6 ...) before including this module, but tests/CMakeLists.txt
-# does not - it only finds Qt inside individual test subdirectories, which is
-# too late for the target_link_libraries below. find_package is idempotent, so
-# calling it again in the root path costs nothing.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Network)
+get_filename_component(RCV_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 # src/data/wavemanager.cpp includes util/version.h, which is generated. The root
 # CMakeLists does this too; the tests tree never did, so generate it here where
@@ -54,6 +49,13 @@ file(
 list(APPEND RCV_CORE_SOURCE_FILES ${RCV_REPO_ROOT}/src/wave/token.cpp)
 list(APPEND RCV_CORE_SOURCE_FILES ${RCV_REPO_ROOT}/src/util/memtracker.cpp)
 
+# Neither is reachable from rcv_core: appconfig is GUI settings persistence,
+# and marker_colors only produces QColors for the wave views.
+list(REMOVE_ITEM RCV_CORE_SOURCE_FILES ${RCV_REPO_ROOT}/src/config/appconfig.cpp)
+list(REMOVE_ITEM RCV_CORE_SOURCE_FILES ${RCV_REPO_ROOT}/src/data/marker_colors.cpp)
+# annotation publishes QColor-backed overlay categories for the code views.
+list(REMOVE_ITEM RCV_CORE_SOURCE_FILES ${RCV_REPO_ROOT}/src/analysis/annotation.cpp)
+
 # The glob picks up both applyToAsm implementations. Exactly one belongs in
 # rcv_core: the no-op stub for CLI builds. The widget-backed version lives in
 # src/code/hidden_latency_asm.cpp and is compiled into the GUI target instead.
@@ -62,15 +64,16 @@ if(NOT RCV_BUILD_GUI)
     list(APPEND RCV_CORE_SOURCE_FILES ${RCV_REPO_ROOT}/src/analysis/hidden_latency_stub.cpp)
 endif()
 
-# util/jsonrequest.hpp declares Q_OBJECT classes, so the target needs moc.
-set(CMAKE_AUTOMOC ON)
-
 add_library(rcv_core STATIC ${RCV_CORE_SOURCE_FILES})
-set_target_properties(rcv_core PROPERTIES AUTOMOC ON)
+# The root CMakeLists sets CMAKE_AUTOMOC globally for the GUI. rcv_core has no
+# Q_OBJECT classes left, and leaving it on makes CMake demand Qt6::moc even in
+# a Qt-free build.
+set_target_properties(rcv_core PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 target_include_directories(rcv_core PUBLIC ${RCV_REPO_ROOT}/src ${CMAKE_BINARY_DIR}/src)
-# Qt6::Gui is required by src/config/config.cpp (QPalette/QColor) and is safe
-# headless: no display is needed unless a QGuiApplication is constructed.
-target_link_libraries(rcv_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network)
+# rcv_core is Qt-free. Everything Qt-shaped in the data layer is either a
+# QWARNING (a plain std::cout macro from util/memtracker.h) or guarded behind
+# RCV_BUILD_GUI. Do not add a Qt link here.
+target_link_libraries(rcv_core PUBLIC Threads::Threads)
 if(RCV_HAS_TRACE_DECODER)
     target_link_libraries(rcv_core PUBLIC rocprof-trace-decoder::rocprof-trace-decoder-static)
 endif()

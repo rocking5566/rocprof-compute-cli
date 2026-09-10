@@ -22,7 +22,9 @@
 
 #pragma once
 
+#ifdef RCV_BUILD_GUI
 #include <QObject>
+#endif
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -32,26 +34,35 @@
 #include "util/diagnostic_log.h"
 
 //! Class containing a string to be parsed by WaveReader. Can be requested by disk or network.
-class StreamRequest : public QObject,
+class StreamRequest :
+#ifdef RCV_BUILD_GUI
+                      public QObject,
+#endif
                       public std::stringstream
 {
+#ifdef RCV_BUILD_GUI
     Q_OBJECT
+#endif
     set_tracked();
 
 public:
     StreamRequest(const std::string& path);
 
 protected:
-    class QNetworkAccessManager* manager = nullptr;
     void ReadFromFile(const std::string& path);
+#ifdef RCV_BUILD_GUI
+    class QNetworkAccessManager* manager = nullptr;
     void ReadFromNetwork(const std::string& path);
     void replyFinished(class QNetworkReply* reply);
+#endif
 };
 
 //! Requests a json file by disk or network, depending on path
 class JsonRequest : public StreamRequest
 {
+#ifdef RCV_BUILD_GUI
     Q_OBJECT
+#endif
     set_tracked();
 
 public:

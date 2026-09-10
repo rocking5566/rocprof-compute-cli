@@ -22,10 +22,14 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <vector>
 #include <map>
 #include "config/config.hpp"
+#ifdef RCV_BUILD_GUI
 #include "util/highlight.h"
+#endif
 #include "util/wave_utils.h"
 
 #define TOKEN_POSY()    2

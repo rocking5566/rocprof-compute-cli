@@ -26,11 +26,13 @@
 #    include <cxxabi.h>
 #endif
 
+#ifdef RCV_BUILD_GUI
 #include <QEventLoop>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QTimer>
+#endif
 #include <fstream>
 #include "jsonrequest.hpp"
 
@@ -38,9 +40,11 @@ using namespace std;
 
 StreamRequest::StreamRequest(const std::string& path)
 {
+#ifdef RCV_BUILD_GUI
     if (path.find("http://") != std::string::npos)
         ReadFromNetwork(path);
     else
+#endif
         ReadFromFile(path);
 }
 
@@ -53,6 +57,7 @@ void StreamRequest::ReadFromFile(const std::string& path)
         setstate(std::ios_base::eofbit | std::ios_base::failbit);
 }
 
+#ifdef RCV_BUILD_GUI
 void StreamRequest::ReadFromNetwork(const std::string& path)
 {
     std::cout << "Request: " << path << std::endl;
@@ -84,6 +89,7 @@ void StreamRequest::replyFinished(QNetworkReply* reply)
         std::cout << "Response: Error - " << reply->error() << std::endl;
     }
 }
+#endif
 
 JsonRequest::JsonRequest(const std::string& path, bool bWarn) : StreamRequest(path)
 {

@@ -21,12 +21,20 @@
 // SOFTWARE.
 
 #pragma once
+
+#include <string>
+#include <vector>
+#ifdef RCV_BUILD_GUI
 #include <QColor>
+#endif
 #include <filesystem>
 #include <map>
 #include <string>
+#ifdef RCV_BUILD_GUI
 #include "util/highlight.h"
+#endif
 
+#ifdef RCV_BUILD_GUI
 namespace WindowColors
 {
 const QColor& Background();
@@ -62,16 +70,25 @@ QColor reverseTextColor();
 void setDark(bool bDark);
 bool isDark();
 }; // namespace WindowColors
+#endif
+
 
 struct StyleColor
 {
+#ifdef RCV_BUILD_GUI
     StyleColor(const std::string& _name, const std::string& _style) :
     name(_name), style(_style), qcolor(ToColor(_style)){};
+#else
+    // Headless builds need the name/style pair only; nothing renders.
+    StyleColor(const std::string& _name, const std::string& _style) : name(_name), style(_style){};
+#endif
     std::string name;
     std::string style;
+#ifdef RCV_BUILD_GUI
     QColor qcolor;
 
     static QColor ToColor(const std::string& style);
+#endif
 };
 
 namespace Config
@@ -80,9 +97,11 @@ const std::vector<StyleColor>& StateColors();
 const std::vector<StyleColor>& TokenColors();
 const std::vector<StyleColor>& StallReasonColors();
 const std::vector<std::pair<std::string, int>> CustomTokens();
+#ifdef RCV_BUILD_GUI
 const QColor& PlotColors(int index);
 
 const QColor& StallColor();
 const QColor& IssueColor();
 const QColor& HiddenLatencyColor();
+#endif
 }; // namespace Config

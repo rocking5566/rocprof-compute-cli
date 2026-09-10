@@ -6,9 +6,16 @@ project(
 
 include(GNUInstallDirs)
 
-set(CMAKE_AUTOUIC ON)
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
+option(RCV_BUILD_GUI "Build the Qt Widgets GUI application" OFF)
+option(RCV_BUILD_CLI "Build the rcv-cli command-line tool" ON)
+
+# Qt code generators. Enabled only for the GUI target, so a CLI-only build does
+# not require Qt6::moc to exist.
+if(RCV_BUILD_GUI)
+    set(CMAKE_AUTOUIC ON)
+    set(CMAKE_AUTOMOC ON)
+    set(CMAKE_AUTORCC ON)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,11 +31,15 @@ if(NOT DEFINED QT_VERSION_MINOR)
     set(QT_VERSION_MINOR 8)
 endif()
 
-if(${QT_VERSION_MAJOR} EQUAL 6)
-    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Widgets Network OpenGLWidgets)
-    qt_standard_project_setup()
-else()
-    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Widgets Network)
+# Qt is a GUI-only dependency. rcv_core and rcv-cli are Qt-free, so a
+# CLI-only build needs no Qt installed at all.
+if(RCV_BUILD_GUI)
+    if(${QT_VERSION_MAJOR} EQUAL 6)
+        find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Widgets Network OpenGLWidgets)
+        qt_standard_project_setup()
+    else()
+        find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Widgets Network)
+    endif()
 endif()
 
 option(RCV_DISABLE_OPENGL "" OFF)
