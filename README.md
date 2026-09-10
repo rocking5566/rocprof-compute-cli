@@ -76,6 +76,9 @@ If the decoder was built with a disassembly backend, raw `.att` input works too:
 ./build/rcv-cli analyze <dir_with_att_and_out_files> --format att -o digest.json
 ```
 
+In a directory containing both formats, auto-detection selects `filenames.json`.
+`--format att` discovers and decodes the `.att` files instead, and fails if there are none.
+
 Set `LD_LIBRARY_PATH` to your ROCm `lib` directory when running `analyze`, so the decoder can
 load `libamd_comgr`.
 

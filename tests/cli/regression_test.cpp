@@ -145,3 +145,12 @@ TEST_F(CliRegression, ReplacesRegularDigestOnlyWithCompleteJson)
     EXPECT_EQ(json::parse(read(output)).at("meta").at("wave_count"), 1);
     EXPECT_EQ(std::distance(fs::directory_iterator(tmp.path), fs::directory_iterator{}), 2);
 }
+
+TEST_F(CliRegression, ForcedAttWithoutAttFilesReportsMissingInputs)
+{
+    auto result = run({binary(), "analyze", trace.string(), "--format", "att", "-o", output.string()});
+    EXPECT_EQ(result.status, 1);
+    EXPECT_EQ(result.signal, 0);
+    EXPECT_NE(result.error.find("no .att"), std::string::npos) << result.error;
+    EXPECT_FALSE(fs::exists(output));
+}

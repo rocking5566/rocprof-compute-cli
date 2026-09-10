@@ -51,11 +51,14 @@ LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceForma
         return result;
     }
 
-    InputInfo info = detectInput(input_path);
-    if (force == ForceFormat::JsonDir)
-        info.type = InputType::JSON_DIR;
-    else if (force == ForceFormat::AttFiles)
-        info.type = InputType::ATT_FILES;
+    const auto preferred = force == ForceFormat::JsonDir ? InputType::JSON_DIR :
+                           force == ForceFormat::AttFiles ? InputType::ATT_FILES : InputType::UNKNOWN;
+    InputInfo info = detectInput(input_path, preferred);
+    if (force == ForceFormat::AttFiles && info.att_files.empty())
+    {
+        result.error = "no .att input files found: " + input_path;
+        return result;
+    }
     if (info.type == InputType::UNKNOWN)
     {
         result.error = "could not determine input format for: " + input_path;

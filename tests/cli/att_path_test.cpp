@@ -145,3 +145,26 @@ TEST(AttPath, RejectsPartialDecode)
     EXPECT_FALSE(load.ok);
     EXPECT_NE(load.error.find("99"), std::string::npos) << load.error;
 }
+
+TEST(AttPath, ForcedAttDiscoversInputsInMixedFormatDirectory)
+{
+    const char* att_dir = std::getenv("RCV_CLI_TEST_ATT_DIR");
+    if (!att_dir || !*att_dir) GTEST_SKIP() << "RCV_CLI_TEST_ATT_DIR not set";
+    cli_test::TempDir tmp;
+    std::filesystem::copy(std::filesystem::path(RCV_CLI_FIXTURE_DIR) / "solo", tmp.path,
+                          std::filesystem::copy_options::recursive);
+    for (const auto& entry : std::filesystem::directory_iterator(att_dir))
+    {
+        auto ext = entry.path().extension();
+        if (ext == ".att" || ext == ".out" || ext == ".hsaco")
+            std::filesystem::create_symlink(entry.path(), tmp.path / entry.path().filename());
+    }
+    const auto from_json = digestOf(tmp.path.string());
+    ASSERT_EQ(from_json.meta.wave_count, 1);
+    const auto from_att = digestOf(tmp.path.string(), rcv::ForceFormat::AttFiles);
+    EXPECT_EQ(from_att.meta.wave_count, 128);
+    EXPECT_GT(from_att.lines.size(), from_json.lines.size());
+    int64_t latency = 0;
+    for (const auto& line : from_att.lines) latency += line.latency;
+    EXPECT_GT(latency, 204) << "must decode instructions, not just preseed sidecar code";
+}

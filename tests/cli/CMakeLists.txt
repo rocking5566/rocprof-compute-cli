@@ -80,6 +80,7 @@ if(RCV_HAS_TRACE_DECODER)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest_builder.cpp)
     target_include_directories(att_path_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
+    target_compile_definitions(att_path_test PRIVATE RCV_CLI_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
     target_link_libraries(att_path_test GTest::gtest_main rcv_core)
     add_test(NAME att_path_test COMMAND att_path_test)
     set_tests_properties(att_path_test PROPERTIES ENVIRONMENT

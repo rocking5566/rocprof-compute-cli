@@ -117,16 +117,23 @@ AttFileInfo parseAttFilename(const std::string& path)
     return info;
 }
 
-InputInfo detectInput(const std::string& path)
+InputInfo detectInput(const std::string& path, InputType preferred)
 {
     InputInfo info;
     info.base_path = path;
 
     fs::path p(path);
 
+    if (preferred == InputType::JSON_DIR)
+    {
+        if (fs::is_directory(p)) info.type = InputType::JSON_DIR;
+        return info;
+    }
+
     // Single file: check for direct-load formats
     if (fs::is_regular_file(p))
     {
+        if (preferred == InputType::ATT_FILES && p.extension() != ".att") return info;
         if (p.extension() == ".rocpd")
         {
             info.type = InputType::ROCPD;
@@ -159,7 +166,7 @@ InputInfo detectInput(const std::string& path)
     }
 
     // Directory: check for filenames.json (JSON_DIR)
-    if (fs::exists(p / "filenames.json"))
+    if (preferred != InputType::ATT_FILES && fs::exists(p / "filenames.json"))
     {
         info.type = InputType::JSON_DIR;
         return info;

@@ -62,7 +62,8 @@ struct InputInfo
     std::string snapshots_json_override;
 };
 
-InputInfo detectInput(const std::string& path);
+// A forced format participates in discovery, including mixed JSON/ATT directories.
+InputInfo detectInput(const std::string& path, InputType preferred = InputType::UNKNOWN);
 
 /// Parse a single .att path's filename (rocprofv3 convention
 /// "<pid>_<agent>_shader_engine_<SE>_<dispatch>.att") into AttFileInfo.
