@@ -62,6 +62,11 @@ endif()
 
 include(RcvCore)
 
+if(RCV_BUILD_CLI)
+    add_executable(rcv-cli src/cli/main.cpp src/cli/digest.cpp src/cli/digest_builder.cpp)
+    target_link_libraries(rcv-cli PRIVATE rcv_core)
+endif()
+
 include_directories(src)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/src)
 
