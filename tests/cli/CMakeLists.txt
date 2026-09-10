@@ -49,3 +49,11 @@ add_executable(format_test format_test.cpp
 target_include_directories(format_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 target_link_libraries(format_test GTest::gtest_main rcv_core)
 add_test(NAME format_test COMMAND format_test)
+
+add_executable(smoke_test smoke_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp)
+target_include_directories(smoke_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
+target_link_libraries(smoke_test GTest::gtest_main rcv_core)
+add_test(NAME smoke_test COMMAND smoke_test)
+set_tests_properties(smoke_test PROPERTIES ENVIRONMENT
+    "RCV_CLI_TEST_TRACE=$ENV{RCV_CLI_TEST_TRACE};RCV_CLI_BINARY=$ENV{RCV_CLI_BINARY}")
