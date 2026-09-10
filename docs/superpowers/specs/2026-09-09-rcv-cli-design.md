@@ -160,9 +160,29 @@ hidden   = hidden.idle + hidden.stall + hidden.issue
 exposed  = total - hidden
 ```
 
-Each `hidden.*` component is bounded by its corresponding non-hidden component because
-`compute_interval` (`hidden_latency.cpp:105-116`) intersects the utilization set with the
-token's own idle/stall/issue intervals, so `0 <= hidden <= total` and `exposed >= 0` hold.
+**Each `hidden.*` component must be clamped before use.** An earlier revision of this spec
+claimed the bound `0 <= hidden <= total` held by construction, reasoning that
+`compute_interval` (`hidden_latency.cpp:105-116`) intersects the utilization set with each
+token's own idle/stall/issue intervals. That is true *per token*, but does not survive
+aggregation: `hidden_latency.cpp` accumulates per-token idle **gaps** keyed by
+`token.code_line`, while `idle_sum` arrives from `code.json` as rocprofv3's own `Idle` column.
+They are different quantities from different producers and routinely disagree — on the
+reference capture, line 1695 has `hidden_idle = 529185` against `idle = 207116`.
+
+The GUI never assumed otherwise: `HorizontalHotspot::hiddenTotal()` (`hotspot.hpp:46-57`)
+clamps at read time. The digest must do the same, or `exposed` goes negative:
+
+```
+hidden_idle_c  = clamp(hidden_idle,  0, idle)
+hidden_stall_c = clamp(hidden_stall, 0, stall)
+hidden_issue_c = clamp(hidden_issue, 0, issue)
+hidden         = hidden_idle_c + hidden_stall_c + hidden_issue_c
+exposed        = total - hidden
+```
+
+Store the raw values in the digest and clamp inside the accessors, matching the GUI: the raw
+numbers stay available for diagnosis while every consumer sees the clamped view. Without this,
+`exposed` — the default sort key — goes negative and ranks real hotspots below noise.
 
 **`include_idle` is pinned to `true`.** The GUI carries this as a parameter throughout
 (`Latency::total`, `hiddenTotal`, `nonHidden` in `hotspot.hpp:31-44`) driven by the global
