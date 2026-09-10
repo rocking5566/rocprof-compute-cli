@@ -101,6 +101,8 @@ Numeric arguments must be whole decimal tokens without signs or whitespace. Boun
 `0..2147483647`; ranges are inclusive, ascending and limited to 1000 indices. These caps
 keep allocations and query output bounded; zero or negative `--top` never means unlimited.
 Invalid numeric arguments return `2` before reading the trace or digest.
+`asm` requires exactly one of `--range` and `--around`; explicit `--context` is valid only
+with `--around`. Conflicting selectors return `2` before digest access.
 
 ### Reading the numbers
 

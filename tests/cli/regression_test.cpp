@@ -218,3 +218,34 @@ TEST_F(CliRegression, NumericBoundaryValuesRemainUsable)
         EXPECT_EQ(result.signal, 0);
     }
 }
+
+TEST_F(CliRegression, AsmRejectsConflictingSelectorsBeforeDigestAccess)
+{
+    for (auto args : std::vector<std::vector<std::string>>{
+             {"--range", "0-2", "--around", "1"}, {"--around", "1", "--range", "0-2"},
+             {"--range", "0-2", "--context", "1"}, {"--context", "1"}, {}})
+    {
+        SCOPED_TRACE(::testing::PrintToString(args));
+        args.insert(args.begin(), {binary(), "asm", "-d", (tmp.path / "missing.json").string()});
+        auto result = run(args);
+        EXPECT_EQ(result.status, 2) << result.error;
+        EXPECT_EQ(result.signal, 0);
+        EXPECT_EQ(result.error.find("cannot read digest"), std::string::npos) << result.error;
+    }
+}
+
+TEST_F(CliRegression, AsmPreservesInclusiveRangeAndAroundContext)
+{
+    ASSERT_EQ(analyze().status, 0);
+    auto range = run({binary(), "asm", "-d", output.string(), "--range", "1-2", "--json"});
+    ASSERT_EQ(range.status, 0) << range.error;
+    auto rows = json::parse(range.output);
+    ASSERT_EQ(rows.size(), 2u);
+    EXPECT_EQ(rows[0]["index"], 1);
+    EXPECT_EQ(rows[1]["index"], 2);
+    auto around = run({binary(), "asm", "-d", output.string(), "--context", "0", "--around", "1", "--json"});
+    ASSERT_EQ(around.status, 0) << around.error;
+    rows = json::parse(around.output);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0]["index"], 1);
+}

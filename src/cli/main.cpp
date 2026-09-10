@@ -283,6 +283,7 @@ int cmdAsm(const std::vector<std::string>& args)
     std::string digest_path = "digest.json";
     int first = -1, last = -1, around = -1, context = 10;
     bool as_json = false;
+    bool has_range = false, has_around = false, has_context = false;
 
     for (size_t i = 0; i < args.size(); ++i)
     {
@@ -290,6 +291,7 @@ int cmdAsm(const std::vector<std::string>& args)
             digest_path = args[++i];
         else if (args[i] == "--range" && i + 1 < args.size())
         {
+            has_range = true;
             const std::string spec = args[++i];
             const auto dash = spec.find('-', 1);
             if (dash == std::string::npos)
@@ -303,20 +305,25 @@ int cmdAsm(const std::vector<std::string>& args)
                 throw UsageError("--range must be ascending and contain at most 1000 indices (inclusive)");
         }
         else if (args[i] == "--around" && i + 1 < args.size())
+        {
+            has_around = true;
             around = integer("--around", args[++i], 0, std::numeric_limits<int>::max());
+        }
         else if (args[i] == "--context" && i + 1 < args.size())
+        {
+            has_context = true;
             context = integer("--context", args[++i], 0, 499);
+        }
         else if (args[i] == "--json")
             as_json = true;
         else
             return usage();
     }
 
-    if (first < 0 && around < 0)
-    {
-        std::cerr << "error: asm needs --range A-B or --around N\n";
-        return 2;
-    }
+    if (has_range == has_around)
+        throw UsageError("asm requires exactly one of --range A-B or --around N");
+    if (has_context && !has_around)
+        throw UsageError("--context requires --around and cannot be used with --range");
 
     rcv::Digest digest;
     std::string error;
