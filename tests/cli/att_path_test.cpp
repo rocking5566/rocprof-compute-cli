@@ -124,6 +124,15 @@ TEST(AttPath, LoadsWavesAndOccupancy)
     const auto d = digestOf(att_dir, rcv::ForceFormat::AttFiles);
     EXPECT_GT(d.meta.wave_count, 0);
     EXPECT_GT(d.meta.se_count, 0);
+    // se0_sm3_sl0_wv0.json records cu=1 for this exact reference wave.
+    bool found = false;
+    for (const auto& wave : d.waves)
+        if (wave.se == 0 && wave.simd == 3 && wave.slot == 0)
+        {
+            EXPECT_EQ(wave.cu, 1);
+            found = true;
+        }
+    EXPECT_TRUE(found);
 }
 
 TEST(AttPath, RejectsPartialDecode)

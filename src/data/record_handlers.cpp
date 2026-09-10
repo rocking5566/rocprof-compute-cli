@@ -33,6 +33,7 @@ void WaveHandler::onWave(int se, const wave_record_t& rec)
     entry.id = rec.id;
     entry.begin = rec.begin;
     entry.end = rec.end;
+    entry.cu = rec.cu;
 
     // Hierarchy: se → simd → wave_slot → instance_counter
     // For the decoder path: wave_id is the wave slot within the SIMD.

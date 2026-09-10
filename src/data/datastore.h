@@ -49,6 +49,7 @@ struct WaveEntry
     int64_t begin = 0;
     int64_t end = 0;
     int64_t time_offset = 0;
+    int cu = -1; // unknown until supplied by a decoded record or loaded wave
 };
 
 using WaveSlotMap = std::map<int, WaveEntry>;

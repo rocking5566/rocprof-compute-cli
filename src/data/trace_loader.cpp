@@ -144,11 +144,14 @@ LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceForma
         // Load once into the shared wave cache, so later analysis cannot mistake
         // a manifest count for successfully loaded data. Empty instructions are valid.
         size_t waves = 0;
-        store.forEachWave([&](const DataStore::WaveCoordinate&, const WaveEntry& entry)
+        store.forEachWave([&](const DataStore::WaveCoordinate& coord, const WaveEntry& entry)
         {
             auto wave = store.getWave(entry);
             if (!wave || !wave->load_complete)
                 throw std::runtime_error("could not load complete wave: " + entry.id);
+            // Retain metadata from this already-loaded wave; digest building
+            // remains const and never has to parse a wave just for its CU.
+            store.wave_hierarchy.at(coord.hwid.se).at(coord.hwid.simd).at(coord.hwid.slot).at(coord.instance).cu = wave->cu;
             ++waves;
         });
         if (waves == 0)

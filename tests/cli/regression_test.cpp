@@ -249,3 +249,25 @@ TEST_F(CliRegression, AsmPreservesInclusiveRangeAndAroundContext)
     ASSERT_EQ(rows.size(), 1u);
     EXPECT_EQ(rows[0]["index"], 1);
 }
+
+TEST_F(CliRegression, WaveDigestPreservesKnownCuAndLeavesUnknownCuUnset)
+{
+    auto wave = json::parse(read(trace / "se0_sm0_sl0_wv0.json"));
+    for (int cu : {7, -1})
+    {
+        if (cu >= 0) wave["wave"]["cu"] = cu;
+        else wave["wave"].erase("cu");
+        write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+        auto result = analyze();
+        ASSERT_EQ(result.status, 0) << result.error;
+        auto digest = rcv::fromJson(json::parse(read(output)));
+        ASSERT_EQ(digest.waves.size(), 1u);
+        const auto& actual = digest.waves[0];
+        EXPECT_EQ(actual.cu, cu);
+        EXPECT_EQ(actual.se, 0);
+        EXPECT_EQ(actual.simd, 0);
+        EXPECT_EQ(actual.slot, 0);
+        EXPECT_EQ(actual.begin, 0);
+        EXPECT_EQ(actual.end, 1000);
+    }
+}

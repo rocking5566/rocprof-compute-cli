@@ -34,7 +34,7 @@ void DataStore::forEachWave(const WaveVisitor& visitor) const
                 for (const auto& [instance, entry] : instance_map)
                     visitor(
                         {
-                            {se, -1, simd, slot},
+                            {se, entry.cu, simd, slot},
                             instance
                     },
                         entry
