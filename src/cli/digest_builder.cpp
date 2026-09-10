@@ -44,6 +44,53 @@ bool tokenTypesSupportHiddenLatency()
     return has_valu && has_matrix;
 }
 
+std::vector<double> binOccupancy(const std::vector<occupancy_record_t>& records, int64_t t0, int64_t t1, int bins)
+{
+    std::vector<double> out(static_cast<size_t>(std::max(bins, 0)), 0.0);
+    if (out.empty() || records.empty()) return out;
+
+    const int64_t span = t1 - t0;
+    if (span <= 0) return out;
+
+    // Integrate the running concurrency over each bin, then divide by bin width
+    // so the value is a time-weighted mean rather than a sample.
+    const double bin_width = static_cast<double>(span) / static_cast<double>(bins);
+    std::vector<double> area(out.size(), 0.0);
+
+    int concurrency = 0;
+    int64_t prev_time = t0;
+
+    auto accumulate = [&](int64_t from, int64_t to)
+    {
+        if (to <= from || concurrency == 0) return;
+        const double a = std::clamp(static_cast<double>(from - t0), 0.0, static_cast<double>(span));
+        const double b = std::clamp(static_cast<double>(to - t0), 0.0, static_cast<double>(span));
+        size_t first = static_cast<size_t>(a / bin_width);
+        size_t last = static_cast<size_t>(b / bin_width);
+        first = std::min(first, out.size() - 1);
+        last = std::min(last, out.size() - 1);
+
+        for (size_t i = first; i <= last; ++i)
+        {
+            const double lo = std::max(a, static_cast<double>(i) * bin_width);
+            const double hi = std::min(b, static_cast<double>(i + 1) * bin_width);
+            if (hi > lo) area[i] += (hi - lo) * concurrency;
+        }
+    };
+
+    for (const auto& r : records)
+    {
+        const auto t = static_cast<int64_t>(r.time);
+        accumulate(prev_time, t);
+        concurrency += 2 * static_cast<int>(r.start) - 1;
+        prev_time = t;
+    }
+    accumulate(prev_time, t1);
+
+    for (size_t i = 0; i < out.size(); ++i) out[i] = area[i] / bin_width;
+    return out;
+}
+
 namespace
 {
 std::vector<std::string> namesOf(const std::vector<StyleColor>& colors)
@@ -129,6 +176,14 @@ Digest buildDigest(const DataStore& store, const std::string& trace_path, int oc
     d.occupancy.bins = occupancy_bins;
     d.occupancy.t0 = begin;
     d.occupancy.t1 = end;
+    d.occupancy.total.assign(static_cast<size_t>(std::max(occupancy_bins, 0)), 0.0);
+
+    for (const auto& [se, records] : store.occupancy_by_se)
+    {
+        auto series = binOccupancy(records, begin, end, occupancy_bins);
+        for (size_t i = 0; i < series.size() && i < d.occupancy.total.size(); ++i) d.occupancy.total[i] += series[i];
+        d.occupancy.per_se[se] = std::move(series);
+    }
 
     return d;
 }

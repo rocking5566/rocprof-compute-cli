@@ -23,7 +23,9 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include "cli/digest.h"
+#include "data/records.h"
 
 class DataStore;
 
@@ -32,6 +34,12 @@ namespace rcv
 /// True when the active token list can support hidden-latency analysis, i.e.
 /// it contains both a VALU entry and a matrix entry (MATRIX/MFMA/WMMA).
 bool tokenTypesSupportHiddenLatency();
+
+/// Mean concurrent-wave count per bin over [t0, t1]. `records` must be
+/// time-ordered, which is how the loader produces them. Occupancy events
+/// carry a `start` bit: +1 on entry, -1 on exit (mirrors
+/// specialized_plots.cpp:150, `accum += 2 * enable - 1`).
+std::vector<double> binOccupancy(const std::vector<occupancy_record_t>& records, int64_t t0, int64_t t1, int bins);
 
 /// Build a digest from a loaded store. Hidden-latency fields are populated
 /// only when store.hidden_latency_analyzed is true.

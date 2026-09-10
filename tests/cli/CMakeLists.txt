@@ -27,3 +27,10 @@ target_link_libraries(hidden_latency_test GTest::gtest_main rcv_core)
 add_test(NAME hidden_latency_test COMMAND hidden_latency_test)
 set_tests_properties(hidden_latency_test PROPERTIES ENVIRONMENT
     "RCV_CLI_TEST_TRACE=$ENV{RCV_CLI_TEST_TRACE}")
+
+add_executable(occupancy_test occupancy_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest_builder.cpp)
+target_include_directories(occupancy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
+target_link_libraries(occupancy_test GTest::gtest_main rcv_core)
+add_test(NAME occupancy_test COMMAND occupancy_test)
