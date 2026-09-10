@@ -125,7 +125,18 @@ std::string renderSummary(const Digest& d)
     std::vector<std::vector<std::string>> stall_rows;
     for (const auto& [name, cycles] : stallReasonBreakdown(d))
         stall_rows.push_back({name, std::to_string(cycles), formatPercent(cycles, t.stall)});
-    out << renderTable({"reason", "cycles", "share"}, stall_rows);
+    if (stall_rows.empty())
+    {
+        // Stall reasons come from PC sampling, not from the thread trace. A
+        // pure SQTT capture has none, so say why rather than print an empty
+        // table and let the reader assume there were no stalls.
+        out << "  none recorded - stall reasons require PC sampling, and this is a "
+               "thread-trace-only capture.\n";
+        out << "  " << t.stall << " stall cycles (" << formatPercent(t.stall, t.total())
+            << ") are still attributed per line; use 'hotspot --sort stall'.\n";
+    }
+    else
+        out << renderTable({"reason", "cycles", "share"}, stall_rows);
 
     out << "\ninstruction types\n";
     std::vector<std::vector<std::string>> type_rows;
