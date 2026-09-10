@@ -27,6 +27,8 @@
 #include "analysis/hidden_latency.h"
 #include "cli/digest.h"
 #include "cli/digest_builder.h"
+#include "cli/format.h"
+#include "cli/queries.h"
 #include "data/datastore.h"
 #include "data/shaderdata.h"
 #include "data/trace_loader.h"
@@ -35,8 +37,30 @@ namespace
 {
 int usage()
 {
-    std::cerr << "usage: rcv-cli analyze <trace_path> [-o digest.json] [--bins N]\n";
+    std::cerr << "usage: rcv-cli <command> [options]\n"
+                 "  analyze <trace_path> [-o digest.json] [--bins N]\n"
+                 "  summary [-d digest.json] [--json]\n";
     return 2;
+}
+
+bool readDigest(const std::string& path, rcv::Digest& out, std::string& error)
+{
+    std::ifstream in(path);
+    if (!in.is_open())
+    {
+        error = "cannot read digest " + path + " (run 'rcv-cli analyze' first)";
+        return false;
+    }
+    try
+    {
+        out = rcv::fromJson(nlohmann::json::parse(in));
+    }
+    catch (const std::exception& e)
+    {
+        error = std::string("malformed digest: ") + e.what();
+        return false;
+    }
+    return true;
 }
 
 int cmdAnalyze(const std::vector<std::string>& args)
@@ -90,6 +114,35 @@ int cmdAnalyze(const std::vector<std::string>& args)
     std::cerr << "wrote " << out_path << ": " << digest.lines.size() << " lines, " << digest.waves.size() << " waves\n";
     return 0;
 }
+
+int cmdSummary(const std::vector<std::string>& args)
+{
+    std::string digest_path = "digest.json";
+    bool as_json = false;
+    for (size_t i = 0; i < args.size(); ++i)
+    {
+        if (args[i] == "-d" && i + 1 < args.size())
+            digest_path = args[++i];
+        else if (args[i] == "--json")
+            as_json = true;
+        else
+            return usage();
+    }
+
+    rcv::Digest digest;
+    std::string error;
+    if (!readDigest(digest_path, digest, error))
+    {
+        std::cerr << "error: " << error << "\n";
+        return 1;
+    }
+
+    if (as_json)
+        std::cout << rcv::summaryJson(digest).dump(2) << "\n";
+    else
+        std::cout << rcv::renderSummary(digest);
+    return 0;
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -101,6 +154,7 @@ int main(int argc, char* argv[])
     const std::vector<std::string> rest(args.begin() + 1, args.end());
 
     if (command == "analyze") return cmdAnalyze(rest);
+    if (command == "summary") return cmdSummary(rest);
 
     return usage();
 }

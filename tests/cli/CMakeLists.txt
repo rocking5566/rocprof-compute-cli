@@ -41,3 +41,11 @@ add_executable(queries_test queries_test.cpp
 target_include_directories(queries_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 target_link_libraries(queries_test GTest::gtest_main rcv_core)
 add_test(NAME queries_test COMMAND queries_test)
+
+add_executable(format_test format_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/queries.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/format.cpp)
+target_include_directories(format_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
+target_link_libraries(format_test GTest::gtest_main rcv_core)
+add_test(NAME format_test COMMAND format_test)

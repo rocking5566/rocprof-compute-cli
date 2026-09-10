@@ -74,7 +74,8 @@ endif()
 include(RcvCore)
 
 if(RCV_BUILD_CLI)
-    add_executable(rcv-cli src/cli/main.cpp src/cli/digest.cpp src/cli/digest_builder.cpp)
+    add_executable(rcv-cli src/cli/main.cpp src/cli/digest.cpp src/cli/digest_builder.cpp
+                          src/cli/queries.cpp src/cli/format.cpp)
     target_link_libraries(rcv-cli PRIVATE rcv_core)
 endif()
 
