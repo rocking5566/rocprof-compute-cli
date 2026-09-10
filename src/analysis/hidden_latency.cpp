@@ -29,8 +29,8 @@
 #include <string_view>
 #include <unordered_map>
 
-#include "code/asmcode.h"
 #include "config/config.hpp"
+#include "util/memtracker.h"
 #include "data/datastore.h"
 #include "data/wavemanager.h"
 
@@ -319,30 +319,10 @@ bool analyzeScoped(DataStore& store, int SE, int SIMD)
     return true;
 }
 
-void clearAsmHidden()
-{
-    for (auto& line : ASMCodeline::line_vec)
-        if (line) line->hotspot.sqtt.clearHidden();
-}
-
 } // namespace
-
-void applyToAsm(const DataStore& store)
-{
-    clearAsmHidden();
-
-    for (const auto& [line_number, hidden] : store.hidden_latency_by_line)
-    {
-        auto it = ASMCodeline::line_map.find(line_number);
-        QWARNING(it != ASMCodeline::line_map.end() && it->second, "Could not find line: " << line_number, continue);
-
-        it->second->hotspot.sqtt.hidden += hidden;
-    }
-}
 
 bool analyze(DataStore& store)
 {
-    clearAsmHidden();
     store.hidden_latency_by_line.clear();
     store.hidden_latency_analyzed = false;
 

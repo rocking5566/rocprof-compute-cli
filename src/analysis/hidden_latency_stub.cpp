@@ -20,30 +20,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "custom_layouts.h"
+#include "analysis/hidden_latency.h"
 
-namespace
+class DataStore;
+
+namespace HiddenLatencyAnalysis
 {
-void clearLayout(QLayout* layout)
-{
-    if (!layout) return;
 
-    while (QLayoutItem* child = layout->takeAt(0))
-    {
-        if (auto* child_layout = child->layout()) clearLayout(child_layout);
-        if (auto* widget = child->widget())
-        {
-            widget->setParent(nullptr);
-            delete widget;
-        }
-        delete child;
-    }
-}
-} // namespace
+// CLI builds have no ASMCodeline widgets to publish into. analyze() calls this
+// unconditionally, so it must exist and do nothing rather than be skipped.
+void applyToAsm(const DataStore&) {}
 
-QVBox::~QVBox() { clearLayout(this); }
-QHBox::~QHBox() { clearLayout(this); }
-
-QBox::~QBox() { clearLayout(this); }
-
-std::unordered_map<std::string, int> MemTracker::classes;
+} // namespace HiddenLatencyAnalysis

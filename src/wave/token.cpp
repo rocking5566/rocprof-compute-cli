@@ -21,22 +21,33 @@
 // SOFTWARE.
 
 #include "token.h"
-#include <QPainter>
-#include <QPainterPath>
-#include <QTimer>
+#ifdef RCV_BUILD_GUI
+#    include <QPainter>
+#    include <QPainterPath>
+#    include <QTimer>
+#endif
 #include <cmath>
 #include <sstream>
+#ifdef RCV_BUILD_GUI
 #include "code/qcodelist.h"
 #include "data/wavemanager.h"
 #include "mainwindow.h"
+#endif
 
 bool Token::bIsNaviWave = true;
 int Token::mipmap_level = 0;
 
 std::vector<std::string> WaveState::STATE_NAMES = {"EMPTY", "IDLE", "EXEC", "WAIT", "STALL"};
+#ifdef RCV_BUILD_GUI
 std::vector<QColor> WaveState::STATE_COLORS = {
-    QColor(254, 254, 254), QColor(127, 127, 127), QColor(0, 254, 0), QColor(254, 254, 0), QColor(254, 0, 0)};
+    QColor(254, 254, 254), QColor(127, 127, 127), QColor(0, 254, 0), QColor(254, 254, 0), QColor(254, 0, 0)
+};
+#endif
 
+// Both convert between pixels and clocks using the window's device scaling, so
+// they are meaningless headless. Every caller is GUI-side (mainwindow.cpp,
+// waveglobal.cpp, scroll.cpp, waveview.cpp).
+#ifdef RCV_BUILD_GUI
 int64_t Token::PosToClock(int64_t value)
 {
     return mipShiftLeft(int64_t(value * 2 / MainWindow::getScaling() / (bIsNaviWave ? 12 : 3)), mipmap_level);
@@ -46,7 +57,9 @@ double Token::ClocksPerPixel()
 {
     return std::ldexp(2.0 / MainWindow::getScaling() / (bIsNaviWave ? 12 : 3), mipmap_level);
 }
+#endif
 
+#ifdef RCV_BUILD_GUI
 static float tonemap(float x)
 {
     x /= 255.0f;
@@ -104,6 +117,7 @@ void Token::DrawToken(QPainter& painter, int64_t viewstart, int64_t viewend, flo
     painter.fillRect(rect, brush);
     painter.drawRect(rect);
 }
+#endif
 
 std::string Token::ToolTip() const
 {
@@ -136,6 +150,7 @@ TokenMap::const_iterator TokenMap::get_token_in_clock(int64_t clock) const
     return std::prev(static_it);
 }
 
+#ifdef RCV_BUILD_GUI
 void WaveState::DrawState(QPainter& painter, int64_t viewstart, int64_t viewend)
 {
     const float scaling = MainWindow::getScaling();
@@ -164,3 +179,4 @@ void WaveState::DrawState(QPainter& painter, int64_t viewstart, int64_t viewend)
 
     painter.drawPath(path);
 }
+#endif

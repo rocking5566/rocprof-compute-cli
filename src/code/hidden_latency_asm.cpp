@@ -20,30 +20,31 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "custom_layouts.h"
+#include <map>
+#include "analysis/hidden_latency.h"
+#include "code/asmcode.h"
+#include "data/datastore.h"
 
-namespace
+namespace HiddenLatencyAnalysis
 {
-void clearLayout(QLayout* layout)
-{
-    if (!layout) return;
 
-    while (QLayoutItem* child = layout->takeAt(0))
+static void clearAsmHidden()
+{
+    for (auto& line : ASMCodeline::line_vec)
+        if (line) line->hotspot.sqtt.clearHidden();
+}
+
+void applyToAsm(const DataStore& store)
+{
+    clearAsmHidden();
+
+    for (const auto& [line_number, hidden] : store.hidden_latency_by_line)
     {
-        if (auto* child_layout = child->layout()) clearLayout(child_layout);
-        if (auto* widget = child->widget())
-        {
-            widget->setParent(nullptr);
-            delete widget;
-        }
-        delete child;
+        auto it = ASMCodeline::line_map.find(line_number);
+        QWARNING(it != ASMCodeline::line_map.end() && it->second, "Could not find line: " << line_number, continue);
+
+        it->second->hotspot.sqtt.hidden += hidden;
     }
 }
-} // namespace
 
-QVBox::~QVBox() { clearLayout(this); }
-QHBox::~QHBox() { clearLayout(this); }
-
-QBox::~QBox() { clearLayout(this); }
-
-std::unordered_map<std::string, int> MemTracker::classes;
+} // namespace HiddenLatencyAnalysis

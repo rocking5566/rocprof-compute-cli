@@ -96,6 +96,7 @@ file(
     src/summary/*.cpp
     src/analysis/*.cpp
     src/code/hidden_latency_asm.cpp
+    src/util/custom_layouts.cpp
     src/mainwindow.ui
     icon.qrc
     ${CMAKE_CURRENT_BINARY_DIR}/src/collection/license_data.cpp)

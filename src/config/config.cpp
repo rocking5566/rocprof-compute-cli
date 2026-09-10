@@ -21,7 +21,9 @@
 // SOFTWARE.
 
 #include "config.hpp"
+#ifdef RCV_BUILD_GUI
 #include <QApplication>
+#endif
 #include <QDebug>
 #include <QFile>
 #include <QPalette>
@@ -136,7 +138,10 @@ bool isDark() { return bDarkTheme; }
 void setDark(bool bDark)
 {
     bDarkTheme = bDark;
+#ifdef RCV_BUILD_GUI
+    // Only a running QApplication has a palette to push into.
     qApp->setPalette(bDarkTheme ? getDarkPalette() : getLightPalette());
+#endif
 
     const_cast<QColor&>(Config::PlotColors(6)) = bDark ? QColor(255, 255, 255) : QColor(0, 0, 0);
 }

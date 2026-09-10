@@ -68,7 +68,7 @@ std::optional<std::vector<int>> MemoryCounter::handle_mem_op(const std::string& 
     return std::nullopt;
 }
 
-std::vector<Canvas::WaitList> buildWaitcntFromTokens(
+std::vector<WaitList> buildWaitcntFromTokens(
     int gfxip, const TokenMap& tokens, const std::vector<CodeData>& code
 )
 {
@@ -81,12 +81,12 @@ std::vector<Canvas::WaitList> buildWaitcntFromTokens(
     else
         results = waitcnt_gfx12(tokens, code);
 
-    std::vector<Canvas::WaitList> waitcnt;
+    std::vector<WaitList> waitcnt;
     waitcnt.reserve(results.size());
 
     for (auto& entry : results)
     {
-        Canvas::WaitList list{entry.line_number, {}};
+        WaitList list{entry.line_number, {}};
         for (int dep : entry.dependencies) list.sources.push_back({dep, 0});
         waitcnt.push_back(std::move(list));
     }

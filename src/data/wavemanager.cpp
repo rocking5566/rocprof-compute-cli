@@ -21,15 +21,21 @@
 // SOFTWARE.
 
 #include "wavemanager.h"
-#include <QPainter>
+#ifdef RCV_BUILD_GUI
+#    include <QPainter>
+#    include "mainwindow.h"
+#endif
+#include <mutex>
 #include <set>
 #include <shared_mutex>
+#include <unordered_set>
 #include "data/waitcnt/analysis.h"
 #include "json/include/nlohmann/json.hpp"
-#include "mainwindow.h"
 #include "util/jsonrequest.hpp"
 #include "util/version.h"
+#ifdef RCV_BUILD_GUI
 #include "wave/scroll.h"
+#endif
 #include "wavedata.h"
 
 std::shared_mutex wave_mutex;
@@ -170,6 +176,7 @@ void TokenGroup::SetMipN()
     SetMipN(next, 0);
 }
 
+#ifdef RCV_BUILD_GUI
 void TokenGroup::Draw(class QPainter& painter, int64_t viewstart, int64_t viewend)
 {
     if (viewstart > wave_end || viewend < wave_begin) return;
@@ -224,6 +231,7 @@ void TokenGroup::Draw(class QPainter& painter, int64_t viewstart, int64_t viewen
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(pen);
 }
+#endif
 
 void WaveInstance::appendTokenWithSlotBump(
     Token&& token, std::array<int64_t, 4>& prev_clock, std::array<int64_t, 4>& last_clock
@@ -305,7 +313,7 @@ void WaveInstance::populateExecMetadata(int wave_id, bool isIdleInfo)
 WaveInstance::WaveInstance(const std::string& _path, int64_t time_offset) : path(_path)
 {
     JsonRequest json(path);
-    QWARNING(json.bValid, "Invalid json path: " << path, return );
+    QWARNING(json.bValid, "Invalid json path: " << path, return);
     nlohmann::json& data = json.data;
 
     auto& instructions = data["wave"]["instructions"];
@@ -376,7 +384,7 @@ WaveInstance::WaveInstance(const std::string& _path, int64_t time_offset) : path
 
     for (auto& array : data["wave"]["waitcnt"])
     {
-        Canvas::WaitList list = {array[0], {}};
+        WaitList list = {array[0], {}};
         for (auto& pair : array[1]) list.sources.push_back({int(pair[0]), int(pair[1])});
         waitcnt.push_back(std::move(list));
     }
@@ -453,7 +461,7 @@ WaveInstance::WaveInstance(const wave_record_t& rec, const std::vector<CodeData>
 
     for (auto& entry : rec.waitcnt)
     {
-        Canvas::WaitList list = {entry.code_line, {}};
+        WaitList list = {entry.code_line, {}};
         for (auto& src : entry.sources) list.sources.push_back({src.first, src.second});
         waitcnt.push_back(std::move(list));
     }
@@ -496,8 +504,15 @@ int64_t WaveInstance::GetMainClock(int code_line, int iteration)
         auto& clock_array = main_wave->line_to_clock.at(code_line);
         if (size_t(iteration) < clock_array.size()) return clock_array.at(iteration);
 
+        // The cutoff is the viewport's left edge. Headless there is no
+        // viewport, so every clock qualifies and the first one is returned.
+#ifdef RCV_BUILD_GUI
+        const int64_t cutoff = QCustomScroll::clock_cutoff_start;
+#else
+        const int64_t cutoff = 0;
+#endif
         for (int64_t clock : clock_array)
-            if (clock >= QCustomScroll::clock_cutoff_start) return clock;
+            if (clock >= cutoff) return clock;
     }
     catch (std::exception& e)
     {
@@ -509,7 +524,7 @@ int64_t WaveInstance::GetMainClock(int code_line, int iteration)
 
 WaveInstance::~WaveInstance() {}
 
-std::vector<Canvas::WaitList> WaveInstance::get_branch_targets() const
+std::vector<WaitList> WaveInstance::get_branch_targets() const
 {
     int JUMP = -1;
 
@@ -548,11 +563,11 @@ std::vector<Canvas::WaitList> WaveInstance::get_branch_targets() const
             list[token.code_line].insert(tokens.at(i + 1).code_line);
     }
 
-    std::vector<Canvas::WaitList> ret{};
+    std::vector<WaitList> ret{};
 
     for (auto& [line, entry] : list)
     {
-        auto& branch = ret.emplace_back(Canvas::WaitList{});
+        auto& branch = ret.emplace_back(WaitList{});
         branch.code_line = line;
         for (auto& target : entry) branch.sources.push_back({target, 0});
     }

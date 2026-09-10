@@ -28,8 +28,7 @@
 #include <vector>
 #include "code/codeload.hpp"
 #include "data/records.h"
-#include "graphics/canvas.h"
-#include "util/custom_layouts.h"
+#include "data/waitlist_types.h"
 #include "wave/token.h"
 
 struct WaveInfo
@@ -60,7 +59,9 @@ struct TokenGroup
     std::array<TokenMap, 9> token_mip;
     bool bInitialized = false;
 
+#ifdef RCV_BUILD_GUI
     void Draw(class QPainter& painter, int64_t viewstart, int64_t viewend);
+#endif
     void SetMipN();
     void SetMipN(const std::vector<TokenArray>& array, size_t M);
 };
@@ -72,7 +73,7 @@ struct WaveInstance : public TokenGroup
     virtual ~WaveInstance();
 
     std::vector<CodeData> code;
-    std::vector<Canvas::WaitList> waitcnt;
+    std::vector<WaitList> waitcnt;
     std::vector<WaveInfo> wave_info;
     std::string path;
     int cu = -1;
@@ -82,7 +83,7 @@ struct WaveInstance : public TokenGroup
     int64_t WaveBegin() const { return wave_begin; }
     int64_t WaveEnd() const { return wave_end; }
 
-    std::vector<Canvas::WaitList> get_branch_targets() const;
+    std::vector<WaitList> get_branch_targets() const;
 
     /// Compute waitcnt from instruction stream and ISA text (decoder path).
     /// Only call for the selected wave — scans all tokens + code text.

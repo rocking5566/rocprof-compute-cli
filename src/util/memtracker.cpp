@@ -20,30 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "custom_layouts.h"
+#include "util/memtracker.h"
 
-namespace
-{
-void clearLayout(QLayout* layout)
-{
-    if (!layout) return;
-
-    while (QLayoutItem* child = layout->takeAt(0))
-    {
-        if (auto* child_layout = child->layout()) clearLayout(child_layout);
-        if (auto* widget = child->widget())
-        {
-            widget->setParent(nullptr);
-            delete widget;
-        }
-        delete child;
-    }
-}
-} // namespace
-
-QVBox::~QVBox() { clearLayout(this); }
-QHBox::~QHBox() { clearLayout(this); }
-
-QBox::~QBox() { clearLayout(this); }
-
-std::unordered_map<std::string, int> MemTracker::classes;
+// Lives here rather than in custom_layouts.cpp, which is Qt Widgets layout code
+// and therefore not part of rcv_core. The counter itself has nothing to do with
+// layouts.
+int MemTracker::count = 0;

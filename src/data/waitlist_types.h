@@ -20,30 +20,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "custom_layouts.h"
+#pragma once
 
-namespace
+#include <utility>
+#include <vector>
+
+/// Wait/branch connection data for one ASM line. Extracted from Canvas so the
+/// data layer can use it without pulling in a QWidget-derived header.
+struct WaitList
 {
-void clearLayout(QLayout* layout)
-{
-    if (!layout) return;
-
-    while (QLayoutItem* child = layout->takeAt(0))
-    {
-        if (auto* child_layout = child->layout()) clearLayout(child_layout);
-        if (auto* widget = child->widget())
-        {
-            widget->setParent(nullptr);
-            delete widget;
-        }
-        delete child;
-    }
-}
-} // namespace
-
-QVBox::~QVBox() { clearLayout(this); }
-QHBox::~QHBox() { clearLayout(this); }
-
-QBox::~QBox() { clearLayout(this); }
-
-std::unordered_map<std::string, int> MemTracker::classes;
+    int code_line;
+    std::vector<std::pair<int, int>> sources;
+};

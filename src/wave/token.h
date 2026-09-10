@@ -22,11 +22,9 @@
 
 #pragma once
 
-#include <QPushButton>
 #include <array>
 #include <map>
 #include "config/config.hpp"
-#include "util/custom_layouts.h"
 #include "util/highlight.h"
 #include "util/wave_utils.h"
 
@@ -87,21 +85,31 @@ struct Token
     bool inClock(int64_t _clock) const { return clock <= _clock && end_time() > _clock; }
 
     std::string ToolTip() const;
+#ifdef RCV_BUILD_GUI
     void DrawToken(class QPainter& painter, int64_t viewstart, int64_t viewend, float penwidth) const;
+#endif
 
     const StyleColor& GetColor() const { return GetColor(type); }
+#ifdef RCV_BUILD_GUI
     const QColor& GetQColor() const { return GetQColor(type); }
     const QColor& GetToneColor() const { return GetToneColor(type); }
+#endif
     const std::string_view GetName() const { return GetName(type); }
 
     static size_t GetNumColors() { return Config::TokenColors().size(); };
     static const StyleColor& GetColor(int i) { return Config::TokenColors()[i % Config::TokenColors().size()]; };
+#ifdef RCV_BUILD_GUI
     static const QColor& GetQColor(int i) { return GetColor(i).qcolor; };
     static const QColor& GetToneColor(int i);
+#endif
     static const std::string_view GetName(int i) { return GetColor(i).name; }
 
+#ifdef RCV_BUILD_GUI
     static int64_t PosToClock(int64_t value);
+#endif
+#ifdef RCV_BUILD_GUI
     static double ClocksPerPixel();
+#endif
     static int64_t GetTokenSize(int64_t value)
     {
         int64_t rounding = mipShiftLeft(1, mipmap_level) >> 1;
@@ -135,12 +143,16 @@ struct WaveState
     int duration = 0;
     int state = 0;
 
+#ifdef RCV_BUILD_GUI
     void DrawState(class QPainter& painter, int64_t viewstart, int64_t viewend);
 
     const QColor& GetColor() const { return GetStateColor(this->state); }
+#endif
     const std::string& GetName() const { return GetStateName(this->state); }
 
+#ifdef RCV_BUILD_GUI
     static const QColor& GetStateColor(int i) { return STATE_COLORS[i % STATE_COLORS.size()]; }
+#endif
     static const std::string& GetStateName(int i) { return STATE_NAMES[i % STATE_NAMES.size()]; }
     static void updateColors();
 
@@ -148,6 +160,8 @@ struct WaveState
     bool operator==(const WaveState& other) { return clock == other.clock; }
 
 private:
+#ifdef RCV_BUILD_GUI
     static std::vector<QColor> STATE_COLORS;
+#endif
     static std::vector<std::string> STATE_NAMES;
 };

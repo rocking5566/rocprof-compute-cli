@@ -20,30 +20,26 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "custom_layouts.h"
+#include <gtest/gtest.h>
+#include "analysis/hidden_latency.h"
+#include "data/datastore.h"
+#include "data/shaderdata.h"
 
-namespace
+// rcv_core must be usable without Qt Widgets. If this links, the data layer
+// has no residual dependency on QWidget-derived headers.
+TEST(RcvCoreLink, DataStoreConstructsAndClears)
 {
-void clearLayout(QLayout* layout)
-{
-    if (!layout) return;
-
-    while (QLayoutItem* child = layout->takeAt(0))
-    {
-        if (auto* child_layout = child->layout()) clearLayout(child_layout);
-        if (auto* widget = child->widget())
-        {
-            widget->setParent(nullptr);
-            delete widget;
-        }
-        delete child;
-    }
+    DataStore store;
+    store.gfxip = 12;
+    store.clear();
+    EXPECT_TRUE(store.code.empty());
 }
-} // namespace
 
-QVBox::~QVBox() { clearLayout(this); }
-QHBox::~QHBox() { clearLayout(this); }
-
-QBox::~QBox() { clearLayout(this); }
-
-std::unordered_map<std::string, int> MemTracker::classes;
+TEST(RcvCoreLink, ApplyToAsmIsCallableWithoutWidgets)
+{
+    DataStore store;
+    // In a CLI build this resolves to the no-op stub. It must not crash and
+    // must not require any ASMCodeline instance to exist.
+    HiddenLatencyAnalysis::applyToAsm(store);
+    SUCCEED();
+}

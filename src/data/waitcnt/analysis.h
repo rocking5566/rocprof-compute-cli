@@ -28,7 +28,7 @@
 #include <vector>
 
 #include "code/codeload.hpp"
-#include "graphics/canvas.h"
+#include "data/waitlist_types.h"
 #include "wave/token.h"
 
 struct LineWaitcnt
@@ -67,6 +67,6 @@ std::vector<LineWaitcnt> waitcnt_gfx9(const TokenMap& tokens, const std::vector<
 std::vector<LineWaitcnt> waitcnt_gfx10(const TokenMap& tokens, const std::vector<CodeData>& code);
 std::vector<LineWaitcnt> waitcnt_gfx12(const TokenMap& tokens, const std::vector<CodeData>& code);
 
-std::vector<Canvas::WaitList> buildWaitcntFromTokens(
+std::vector<WaitList> buildWaitcntFromTokens(
     int gfxip, const TokenMap& tokens, const std::vector<CodeData>& code
 );

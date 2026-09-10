@@ -22,6 +22,7 @@
 
 #pragma once
 #include <QWidget>
+#include "data/waitlist_types.h"
 #include "util/custom_layouts.h"
 
 // This class will paint arrows on top of a QCodelist
@@ -45,11 +46,7 @@ public:
         bool bIsInterior;
     };
 
-    struct WaitList
-    {
-        int code_line;
-        std::vector<std::pair<int, int>> sources;
-    };
+    using WaitList = ::WaitList;
 
     enum class DrawType
     {
