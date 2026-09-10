@@ -47,11 +47,17 @@ nicety.
 
 ### `rcv_core` static library
 
-Links `Qt6::Core` and `Qt6::Gui` — no Widgets. `Qt6::Gui` is required because
-`src/config/config.cpp:24,27` uses `QApplication`/`QPalette`/`QColor` for theme palettes.
-Linking it is headless-safe: no display is needed unless a `QGuiApplication` is constructed,
-and `getLightPalette()` (`config.cpp:71`) uses a function-local static, so palettes are never
-initialized in a CLI run. `QColor` is a plain value type with no application requirement.
+**Links no Qt at all.** An earlier revision of this spec called for `Qt6::Core` + `Qt6::Gui`,
+on the grounds that `config.cpp` needs `QPalette`/`QColor`. That turned out to be avoidable: the
+CLI wants only `StyleColor::name`, and the token and stall-reason tables behind it are plain
+JSON. Every colour-returning API is now compiled only when `RCV_BUILD_GUI` is set, and
+`StreamRequest`'s network half is too — `ReadFromFile` was already `std::ifstream`. A CLI-only
+build therefore skips `find_package(Qt6)` and the AUTOMOC/AUTOUIC/AUTORCC generators entirely
+and runs on a machine with no Qt installed.
+
+Three translation units left `rcv_core` because nothing in it reaches them:
+`config/appconfig.cpp` (GUI settings persistence), `data/marker_colors.cpp`, and
+`analysis/annotation.cpp`.
 
 Members are the data-layer sources already proven to build headlessly by
 `tests/att/CMakeLists.txt`:
