@@ -73,6 +73,14 @@ function(rcv_fetch_trace_decoder)
             PATHS "${TRACE_DECODER_ROOT}"
             PATH_SUFFIXES source lib/cmake/rocprof-trace-decoder
             NO_DEFAULT_PATH)
+        # An installed ROCm decoder ships only the shared target. The repo's
+        # targets reference the -static name that a from-source build produces,
+        # so alias it rather than editing every call site.
+        if(TARGET rocprof-trace-decoder::rocprof-trace-decoder
+           AND NOT TARGET rocprof-trace-decoder::rocprof-trace-decoder-static)
+            add_library(rocprof-trace-decoder::rocprof-trace-decoder-static ALIAS
+                        rocprof-trace-decoder::rocprof-trace-decoder)
+        endif()
         _rcv_add_rocm_rpath_links()
         message(STATUS "Trace-decoder enabled: ${rocprof-trace-decoder_DIR}")
         set(RCV_HAS_TRACE_DECODER ON PARENT_SCOPE)
