@@ -22,9 +22,11 @@
 
 #include <fstream>
 #include <cerrno>
+#include <charconv>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 #include <unistd.h>
@@ -39,6 +41,19 @@
 
 namespace
 {
+struct UsageError : std::runtime_error { using std::runtime_error::runtime_error; };
+
+int integer(const std::string& option, const std::string& text, int minimum, int maximum)
+{
+    int value = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos ||
+        parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || value < minimum || value > maximum)
+        throw UsageError(option + " expects an integer in [" + std::to_string(minimum) + ", " +
+                         std::to_string(maximum) + "]: '" + text + "'");
+    return value;
+}
+
 void validateDestination(const std::filesystem::path& path)
 {
     std::error_code ec;
@@ -128,7 +143,7 @@ int cmdAnalyze(const std::vector<std::string>& args)
         if (args[i] == "-o" && i + 1 < args.size())
             out_path = args[++i];
         else if (args[i] == "--bins" && i + 1 < args.size())
-            bins = std::stoi(args[++i]);
+            bins = integer("--bins", args[++i], 1, 4096);
         else if (args[i] == "--format" && i + 1 < args.size())
         {
             const std::string f = args[++i];
@@ -229,7 +244,7 @@ int cmdHotspot(const std::vector<std::string>& args)
         else if (args[i] == "--sort" && i + 1 < args.size())
             sort = args[++i];
         else if (args[i] == "--top" && i + 1 < args.size())
-            top = std::stoi(args[++i]);
+            top = integer("--top", args[++i], 1, rcv::MaxHotspotRows);
         else if (args[i] == "--json")
             as_json = true;
         else
@@ -282,13 +297,15 @@ int cmdAsm(const std::vector<std::string>& args)
                 std::cerr << "error: --range expects A-B\n";
                 return 2;
             }
-            first = std::stoi(spec.substr(0, dash));
-            last = std::stoi(spec.substr(dash + 1));
+            first = integer("--range start", spec.substr(0, dash), 0, std::numeric_limits<int>::max());
+            last = integer("--range end", spec.substr(dash + 1), 0, std::numeric_limits<int>::max());
+            if (last < first || int64_t(last) - first + 1 > 1000)
+                throw UsageError("--range must be ascending and contain at most 1000 indices (inclusive)");
         }
         else if (args[i] == "--around" && i + 1 < args.size())
-            around = std::stoi(args[++i]);
+            around = integer("--around", args[++i], 0, std::numeric_limits<int>::max());
         else if (args[i] == "--context" && i + 1 < args.size())
-            context = std::stoi(args[++i]);
+            context = integer("--context", args[++i], 0, 499);
         else if (args[i] == "--json")
             as_json = true;
         else
@@ -328,7 +345,7 @@ int cmdOccupancy(const std::vector<std::string>& args)
         if (args[i] == "-d" && i + 1 < args.size())
             digest_path = args[++i];
         else if (args[i] == "--se" && i + 1 < args.size())
-            se = std::stoi(args[++i]);
+            se = integer("--se", args[++i], 0, std::numeric_limits<int>::max());
         else if (args[i] == "--json")
             as_json = true;
         else
@@ -353,17 +370,30 @@ int cmdOccupancy(const std::vector<std::string>& args)
 
 int main(int argc, char* argv[])
 {
-    std::vector<std::string> args(argv + 1, argv + argc);
-    if (args.empty()) return usage();
+    try
+    {
+        std::vector<std::string> args(argv + 1, argv + argc);
+        if (args.empty()) return usage();
 
-    const std::string command = args[0];
-    const std::vector<std::string> rest(args.begin() + 1, args.end());
+        const std::string command = args[0];
+        const std::vector<std::string> rest(args.begin() + 1, args.end());
 
-    if (command == "analyze") return cmdAnalyze(rest);
-    if (command == "summary") return cmdSummary(rest);
-    if (command == "hotspot") return cmdHotspot(rest);
-    if (command == "asm") return cmdAsm(rest);
-    if (command == "occupancy") return cmdOccupancy(rest);
+        if (command == "analyze") return cmdAnalyze(rest);
+        if (command == "summary") return cmdSummary(rest);
+        if (command == "hotspot") return cmdHotspot(rest);
+        if (command == "asm") return cmdAsm(rest);
+        if (command == "occupancy") return cmdOccupancy(rest);
 
-    return usage();
+        return usage();
+    }
+    catch (const UsageError& e)
+    {
+        std::cerr << "error: " << e.what() << "\n";
+        return 2;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
+    }
 }

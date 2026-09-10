@@ -96,6 +96,12 @@ load `libamd_comgr`.
 text costs about half the bytes of the equivalent JSON. Exit status is `0` on success, `2`
 for a usage error, `1` for a runtime failure.
 
+Numeric arguments must be whole decimal tokens without signs or whitespace. Bounds are
+`--bins 1..4096`, `--top 1..1000`, and `--context 0..499`. ASM indices and `--se` are
+`0..2147483647`; ranges are inclusive, ascending and limited to 1000 indices. These caps
+keep allocations and query output bounded; zero or negative `--top` never means unlimited.
+Invalid numeric arguments return `2` before reading the trace or digest.
+
 ### Reading the numbers
 
 ```

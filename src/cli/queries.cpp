@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <map>
+#include <limits>
 #include <stdexcept>
 
 namespace rcv
@@ -97,6 +98,8 @@ GroupBy parseGroupBy(const std::string& s)
 
 std::vector<HotspotRow> hotspot(const Digest& d, GroupBy by, SortKey sort, int top)
 {
+    if (top < 1 || top > MaxHotspotRows)
+        throw std::invalid_argument("top must be in [1, " + std::to_string(MaxHotspotRows) + "]");
     std::vector<HotspotRow> rows;
 
     if (by == GroupBy::Asm)
@@ -137,7 +140,7 @@ std::vector<HotspotRow> hotspot(const Digest& d, GroupBy by, SortKey sort, int t
         [sort](const HotspotRow& a, const HotspotRow& b) { return keyValue(a, sort) > keyValue(b, sort); }
     );
 
-    if (top > 0 && rows.size() > static_cast<size_t>(top)) rows.resize(static_cast<size_t>(top));
+    if (rows.size() > static_cast<size_t>(top)) rows.resize(static_cast<size_t>(top));
     return rows;
 }
 
@@ -190,7 +193,11 @@ std::vector<LineDigest> asmRange(const Digest& d, int first, int last)
 
 std::vector<LineDigest> asmAround(const Digest& d, int index, int context)
 {
-    return asmRange(d, index - context, index + context);
+    if (context < 0) throw std::invalid_argument("context must be nonnegative");
+    const int64_t first = int64_t(index) - context;
+    const int64_t last = int64_t(index) + context;
+    return asmRange(d, static_cast<int>(std::max<int64_t>(first, std::numeric_limits<int>::min())),
+                    static_cast<int>(std::min<int64_t>(last, std::numeric_limits<int>::max())));
 }
 
 } // namespace rcv

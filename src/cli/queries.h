@@ -61,6 +61,8 @@ struct HotspotRow
 SortKey parseSortKey(const std::string& s);
 GroupBy parseGroupBy(const std::string& s);
 
+inline constexpr int MaxHotspotRows = 1000;
+/// top must be in [1, MaxHotspotRows], otherwise throws invalid_argument.
 std::vector<HotspotRow> hotspot(const Digest& d, GroupBy by, SortKey sort, int top);
 
 /// Cycle totals aggregated over every line.

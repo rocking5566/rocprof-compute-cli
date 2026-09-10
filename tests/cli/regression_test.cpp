@@ -154,3 +154,67 @@ TEST_F(CliRegression, ForcedAttWithoutAttFilesReportsMissingInputs)
     EXPECT_NE(result.error.find("no .att"), std::string::npos) << result.error;
     EXPECT_FALSE(fs::exists(output));
 }
+
+TEST_F(CliRegression, MalformedNumbersAreUsageErrorsBeforeInputAccess)
+{
+    for (const auto& value : {"abc", "10junk", "2147483648", "999999999999999999999", "-1", "+1", "1.5", " 1", ""})
+    {
+        for (auto args : std::vector<std::vector<std::string>>{
+                 {"analyze", "/nonexistent/trace", "--bins", value},
+                 {"hotspot", "--top", value}, {"asm", "--around", value},
+                 {"asm", "--around", "1", "--context", value}, {"occupancy", "--se", value},
+                 {"asm", "--range", std::string(value) + "-2"},
+                 {"asm", "--range", std::string("0-") + value}})
+        {
+            SCOPED_TRACE(::testing::PrintToString(args));
+            const std::string command = args.front();
+            args.insert(args.begin(), binary());
+            if (command != "analyze") args.insert(args.end(), {"-d", (tmp.path / "missing.json").string()});
+            auto result = run(args);
+            EXPECT_EQ(result.signal, 0) << result.error;
+            EXPECT_EQ(result.status, 2) << result.error;
+            EXPECT_NE(result.error.find("--"), std::string::npos) << result.error;
+            EXPECT_EQ(result.error.find("cannot read digest"), std::string::npos);
+            EXPECT_EQ(result.error.find("input path does not exist"), std::string::npos);
+        }
+    }
+}
+
+TEST_F(CliRegression, NumericBoundsDoNotEnableUnboundedOutput)
+{
+    ASSERT_EQ(analyze().status, 0);
+    for (auto args : std::vector<std::vector<std::string>>{
+             {"analyze", trace.string(), "--bins", "0"}, {"analyze", trace.string(), "--bins", "4097"},
+             {"hotspot", "--top", "0"}, {"hotspot", "--top", "1001"},
+             {"asm", "--around", "1", "--context", "500"}, {"asm", "--range", "2-1"},
+             {"asm", "--range", "0-1000"}, {"asm", "--range", "0-2147483647"}})
+    {
+        SCOPED_TRACE(::testing::PrintToString(args));
+        const auto command = args.front();
+        args.insert(args.begin(), binary());
+        args.insert(args.end(), {command == "analyze" ? "-o" : "-d", output.string()});
+        auto result = run(args);
+        EXPECT_EQ(result.signal, 0);
+        EXPECT_EQ(result.status, 2) << result.error;
+        EXPECT_TRUE(result.output.empty());
+    }
+}
+
+TEST_F(CliRegression, NumericBoundaryValuesRemainUsable)
+{
+    ASSERT_EQ(analyze().status, 0);
+    for (auto args : std::vector<std::vector<std::string>>{
+             {"hotspot", "--top", "1"}, {"hotspot", "--top", "1000"},
+             {"asm", "--around", "0", "--context", "0"},
+             {"asm", "--around", "2147483647", "--context", "499"},
+             {"asm", "--range", "2147483647-2147483647"}, {"asm", "--range", "0-999"},
+             {"occupancy", "--se", "0"}, {"occupancy", "--se", "2147483647"}})
+    {
+        SCOPED_TRACE(::testing::PrintToString(args));
+        args.insert(args.begin(), binary());
+        args.insert(args.end(), {"-d", output.string(), "--json"});
+        auto result = run(args);
+        EXPECT_EQ(result.status, 0) << result.error;
+        EXPECT_EQ(result.signal, 0);
+    }
+}

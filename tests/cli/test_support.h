@@ -63,6 +63,8 @@ inline RunResult run(const std::vector<std::string>& args, const fs::path& cwd =
     if (pid < 0) throw std::runtime_error("fork failed");
     if (pid == 0)
     {
+        rlimit no_core{0, 0};
+        if (setrlimit(RLIMIT_CORE, &no_core) != 0) _exit(126);
         int out = open((capture.path / "stdout").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
         int err = open((capture.path / "stderr").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
         if (out < 0 || err < 0 || dup2(out, STDOUT_FILENO) < 0 || dup2(err, STDERR_FILENO) < 0) _exit(126);

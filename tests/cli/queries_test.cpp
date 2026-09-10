@@ -23,6 +23,7 @@
 #include "cli/queries.h"
 #include <gtest/gtest.h>
 #include <stdexcept>
+#include <limits>
 
 namespace
 {
@@ -184,4 +185,26 @@ TEST(Queries, ParseRejectsUnknownKeys)
     EXPECT_EQ(rcv::parseGroupBy("asm"), rcv::GroupBy::Asm);
     EXPECT_THROW(rcv::parseSortKey("bogus"), std::invalid_argument);
     EXPECT_THROW(rcv::parseGroupBy("bogus"), std::invalid_argument);
+}
+
+TEST(Queries, HotspotRejectsUnboundedAndOversizedLimits)
+{
+    for (int top : {0, -1, 1001, std::numeric_limits<int>::max()})
+    {
+        EXPECT_THROW(rcv::hotspot(makeDigest(), rcv::GroupBy::Asm, rcv::SortKey::Exposed, top), std::invalid_argument);
+        EXPECT_THROW(rcv::hotspot({}, rcv::GroupBy::Source, rcv::SortKey::Exposed, top), std::invalid_argument);
+    }
+}
+
+TEST(Queries, AsmAroundUsesCheckedArithmeticAtIntegerBoundary)
+{
+    rcv::Digest d;
+    rcv::LineDigest line;
+    line.index = std::numeric_limits<int>::max();
+    d.lines.push_back(line);
+    const auto rows = rcv::asmAround(d, line.index, 10);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0].index, line.index);
+    EXPECT_EQ(rcv::asmAround(d, 0, std::numeric_limits<int>::max()).size(), 1u);
+    EXPECT_THROW(rcv::asmAround(d, 0, -1), std::invalid_argument);
 }
