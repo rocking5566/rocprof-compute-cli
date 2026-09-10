@@ -1,0 +1,10 @@
+{
+  "code": [
+    ["; synthetic_kernel", 0, 0, "", 1, 0, 0, 0, 0, 0],
+    ["v_fma_f32 v0, v1, v2, v3", 0, 1, "", 1, 4, 1, 200, 180, 0],
+    ["v_mov_b32 v4, v5", 0, 2, "", 1, 8, 1, 4, 0, 0]
+  ],
+  "header": "ISA, _, LineNumber, Source, Codeobj, Vaddr, Hit, Latency, Stall, Idle",
+  "sqtt_funcmap": [],
+  "version": "3.1.0"
+}

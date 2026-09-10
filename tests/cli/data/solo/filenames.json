@@ -1,0 +1,12 @@
+{
+  "counter_names": [],
+  "gfxip": 12,
+  "gfxv": "navi",
+  "global_begin_time": 0,
+  "other_simd_filenames": {},
+  "shaderdata_filenames": {},
+  "version": "3.1.0",
+  "wave_filenames": {
+    "0": {"0": {"0": {"0": ["se0_sm0_sl0_wv0.json", 0, 1000]}}}
+  }
+}

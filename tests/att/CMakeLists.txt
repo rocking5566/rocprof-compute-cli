@@ -21,6 +21,7 @@ if(RCV_HAS_TRACE_DECODER)
         ${SRC_DIR}/code/codeload.cpp
         ${SRC_DIR}/util/custom_layouts.cpp
         ${SRC_DIR}/util/jsonrequest.cpp
+        ${SRC_DIR}/util/memtracker.cpp
         ${SRC_DIR}/config/config.cpp)
 
     target_include_directories(att_loader_test PRIVATE ${SRC_DIR})

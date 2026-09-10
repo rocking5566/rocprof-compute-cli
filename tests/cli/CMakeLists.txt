@@ -57,3 +57,12 @@ target_link_libraries(smoke_test GTest::gtest_main rcv_core)
 add_test(NAME smoke_test COMMAND smoke_test)
 set_tests_properties(smoke_test PROPERTIES ENVIRONMENT
     "RCV_CLI_TEST_TRACE=$ENV{RCV_CLI_TEST_TRACE};RCV_CLI_BINARY=$ENV{RCV_CLI_BINARY}")
+
+add_executable(synthetic_test synthetic_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest_builder.cpp)
+target_include_directories(synthetic_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
+target_compile_definitions(synthetic_test PRIVATE
+    RCV_CLI_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_link_libraries(synthetic_test GTest::gtest_main rcv_core)
+add_test(NAME synthetic_test COMMAND synthetic_test)
