@@ -42,9 +42,10 @@ cmake --build build --target rcv-cli --parallel
 
 `RCV_BUILD_CLI` defaults to `ON` and `RCV_BUILD_GUI` to `OFF`. Add `-DRCV_BUILD_GUI=ON` to
 build the GUI as well; only that target needs Qt. Omitting both decoder options is not a
-JSON-only configuration: CMake fetches and builds the decoder by default. For raw ATT input,
-use that default fetch or pass `-DTRACE_DECODER_ROOT=/path/to/decoder`; the decoder must have
-a disassembly backend when the capture relies on its `.out` code objects for ISA.
+portable way to select JSON-only: decoder fetching defaults to `ON` except on macOS. Pass
+`-DRCV_FETCH_TRACE_DECODER=OFF` explicitly for JSON-only builds. For raw ATT input, use the
+default fetch or pass `-DTRACE_DECODER_ROOT=/path/to/decoder`; the decoder must have a
+disassembly backend when the capture relies on its `.out` code objects for ISA.
 
 ### Two phases: analyze once, query many
 
