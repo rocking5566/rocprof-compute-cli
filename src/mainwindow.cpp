@@ -66,6 +66,7 @@
 #include "data/input_detector.h"
 #include "data/json_emitter.h"
 #include "data/record_handlers.h"
+#include "data/trace_loader.h"
 #ifdef RCV_HAS_TRACE_DECODER
 #    include "data/rocpd_emitter.h"
 #    include "data/trace_decoder_emitter.h"
@@ -495,7 +496,7 @@ void MainWindow::UpdateWaveViewRange()
 {
     auto vmin = parseLineEditInt64(ui->wview_range_min);
     auto vmax = parseLineEditInt64(ui->wview_range_max);
-    QWARNING(vmin && vmax, "Could not set range values.", return );
+    QWARNING(vmin && vmax, "Could not set range values.", return);
 
     QCustomScroll::clock_cutoff_start = *vmin;
     QCustomScroll::clock_cutoff_end = std::max(*vmax, *vmin + int64_t(128));
@@ -517,22 +518,22 @@ void MainWindow::SetMainWave(int se, int simd, int sl, int wid)
 {
     constexpr int64_t WAVE_END_ROOM = 20000;
 
-    QWARNING(data_store, "No data store", return );
+    QWARNING(data_store, "No data store", return);
     auto se_it = data_store->wave_hierarchy.find(se);
-    QWARNING(se_it != data_store->wave_hierarchy.end(), "Invalid SE: " << se, return );
+    QWARNING(se_it != data_store->wave_hierarchy.end(), "Invalid SE: " << se, return);
     auto simd_it = se_it->second.find(simd);
-    QWARNING(simd_it != se_it->second.end(), "Invalid SIMD: " << simd, return );
+    QWARNING(simd_it != se_it->second.end(), "Invalid SIMD: " << simd, return);
     auto slot_it = simd_it->second.find(sl);
-    QWARNING(slot_it != simd_it->second.end(), "Invalid wave slot: " << sl, return );
+    QWARNING(slot_it != simd_it->second.end(), "Invalid wave slot: " << sl, return);
     auto wid_it = slot_it->second.find(wid);
-    QWARNING(wid_it != slot_it->second.end(), "Invalid WID: " << wid, return );
+    QWARNING(wid_it != slot_it->second.end(), "Invalid WID: " << wid, return);
 
     const bool no_main_wave = WaveInstance::main_wave == nullptr;
     const auto& entry = wid_it->second;
     auto main_wave = data_store->getWave(entry);
     WaveInstance::main_wave = main_wave;
 
-    QWARNING(main_wave && code_contents && code_contents->connector, "invalid code_contents", return );
+    QWARNING(main_wave && code_contents && code_contents->connector, "invalid code_contents", return);
 
     force_gather = current_wave_coord_se != se || no_main_wave;
     current_wave_coord_se = se;
@@ -940,7 +941,7 @@ void MainWindow::OpenRocpd()
 
 void MainWindow::LoadSourceFiles()
 {
-    QWARNING(source_filetab, "No source file tab", return );
+    QWARNING(source_filetab, "No source file tab", return);
 
     if (ui->fileExplorer_tab->layout())
     {
@@ -1141,21 +1142,31 @@ MainWindow::LoadResult MainWindow::LoadInputImpl(InputInfo input_info, const std
         switch (input_info.type)
         {
             case InputType::JSON_DIR:
+            case InputType::ATT_FILES:
             {
-                JsonRecordEmitter emitter(
-                    ui_dir,
-                    dispatcher,
-                    *data_store,
-                    [this](const DataStore& trace)
-                    {
-                        const bool enabled =
-                            AppConfig::getInstance().resolveLoadWaveStatesForTrace(trace.gfxip, trace.gfxv);
-                        const QSignalBlocker blocker(ui->load_wave_states_box);
-                        ui->load_wave_states_box->setChecked(enabled);
-                        return enabled;
-                    }
-                );
-                emitter.run();
+                const auto result = rcv::loadTrace(input_path, *data_store);
+                if (!result.ok)
+                {
+                    load_result.status = LoadStatus::LoadFailed;
+                    load_result.message = QString::fromStdString(result.error);
+                    if (show_dialogs) QMessageBox::warning(this, "Trace load failed", load_result.message);
+                    return load_result;
+                }
+
+                if (!result.warnings.empty())
+                {
+                    QString details;
+                    for (const auto& msg : result.warnings) details += QString::fromStdString(msg) + "\n";
+                    load_result.message = details.trimmed();
+                    if (show_dialogs)
+                        QMessageBox::warning(
+                            this,
+                            "Trace decoder issues",
+                            QString("%1 decoder issue(s) were reported:\n\n%2")
+                                .arg(result.warnings.size())
+                                .arg(details.trimmed())
+                        );
+                }
                 break;
             }
             case InputType::SPM_JSON:
@@ -1177,26 +1188,6 @@ MainWindow::LoadResult MainWindow::LoadInputImpl(InputInfo input_info, const std
                 break;
             }
 #ifdef RCV_HAS_TRACE_DECODER
-            case InputType::ATT_FILES:
-            {
-                TraceDecoderEmitter emitter(input_info, dispatcher, *data_store);
-                emitter.run();
-                // Surface decoder issues that otherwise only appeared on stderr.
-                const auto& errs = emitter.parseErrors();
-                if (!errs.empty())
-                {
-                    QString details;
-                    for (const auto& msg : errs) details += QString::fromStdString(msg) + "\n";
-                    load_result.message = details.trimmed();
-                    if (show_dialogs)
-                        QMessageBox::warning(
-                            this,
-                            "Trace decoder issues",
-                            QString("%1 decoder issue(s) were reported:\n\n%2").arg(errs.size()).arg(details.trimmed())
-                        );
-                }
-                break;
-            }
             case InputType::ROCPD:
             {
                 RocpdEmitter emitter(input_info, dispatcher, *data_store);
@@ -1558,7 +1549,7 @@ void populateSummaryTable(
 
 void MainWindow::CreateCountersPlot()
 {
-    QWARNING(summary_view && ui->tabWidget_2, "No summary view!", return );
+    QWARNING(summary_view && ui->tabWidget_2, "No summary view!", return);
 
     summary_view->clearTableData();
     summary_view->clearBarChartData();
@@ -1835,7 +1826,8 @@ std::optional<PlotAlignmentReference> MainWindow::getPlotAlignmentReference()
     const auto* scrollbar = window->global_view_scrollarea->horizontalScrollBar();
     const double start = QGlobalView::PosToClock(scrollbar->value());
     return PlotAlignmentReference{
-        start, static_cast<double>(QGlobalView::Delta()), viewport->mapToGlobal(QPoint(0, 0)).x(), viewport->width()};
+        start, static_cast<double>(QGlobalView::Delta()), viewport->mapToGlobal(QPoint(0, 0)).x(), viewport->width()
+    };
 }
 
 void MainWindow::setPlotBarPos(float x)
@@ -1867,7 +1859,7 @@ void MainWindow::UpdateGraphInfo(const std::string& name, float value)
 
 void MainWindow::UpdateOccupancyInfo(const std::vector<std::pair<std::string, int>>& values, float norm)
 {
-    QWARNING(ui->occ_info_table, "No graph info", return );
+    QWARNING(ui->occ_info_table, "No graph info", return);
 
     for (auto& [k, v] : values)
     {
@@ -1913,7 +1905,7 @@ void MainWindow::updateAlignedPlots()
 void MainWindow::incrementWaveViewMipmap(int inc, float position)
 {
     auto view = getCUScroll();
-    QWARNING(view, "Widget not found", return );
+    QWARNING(view, "Widget not found", return);
 
     auto* ui = MainWindow::window->ui;
 
@@ -1941,9 +1933,9 @@ void MainWindow::SetWaveViewMipmap(int value)
 
 void MainWindow::incrementGlobalViewMipmap(int inc, int content_mouse_x)
 {
-    QWARNING(window, "No MainWindow", return );
-    QWARNING(window->global_view_scrollarea, "No global_view scroll area", return );
-    QWARNING(window->global_view_widget, "No global_view widget", return );
+    QWARNING(window, "No MainWindow", return);
+    QWARNING(window->global_view_scrollarea, "No global_view scroll area", return);
+    QWARNING(window->global_view_widget, "No global_view widget", return);
 
     auto* ui = window->ui;
     int spinValue = ui->global_spin->value() + inc;
@@ -1974,7 +1966,7 @@ void MainWindow::incrementGlobalViewMipmap(int inc, int content_mouse_x)
 
 void MainWindow::SetGlobalViewMipmap(int spinValue)
 {
-    QWARNING(global_view_scrollarea, "No global_view scroll area", return );
+    QWARNING(global_view_scrollarea, "No global_view scroll area", return);
 
     int new_mip = QGlobalView::SpinToMip(spinValue);
     int old_mip = QGlobalView::GetMip();
@@ -2129,7 +2121,7 @@ void MainWindow::SetSearchText(const std::string& text)
 
 void MainWindow::NextSearch()
 {
-    QWARNING(code_contents, "No code", return );
+    QWARNING(code_contents, "No code", return);
 
     std::string to_search = ui->search_edit->displayText().toStdString();
 
@@ -2151,7 +2143,7 @@ void MainWindow::NextSearch()
 
 void MainWindow::PrevSearch()
 {
-    QWARNING(code_contents, "No code", return );
+    QWARNING(code_contents, "No code", return);
 
     std::string to_search = ui->search_edit->displayText().toStdString();
 
@@ -2201,7 +2193,7 @@ void MainWindow::ScrollViewsTo(int64_t cycle)
 void MainWindow::GatherWaves()
 {
     QASSERT(cuwaves_content, "No CU Widget");
-    QWARNING(data_store, "No data store", return );
+    QWARNING(data_store, "No data store", return);
 
     current_loaded_clk_start = QCustomScroll::clock_cutoff_start;
     current_loaded_clk_end = QCustomScroll::clock_cutoff_end;
@@ -2399,7 +2391,7 @@ void MainWindow::GatherWaves()
     utilization_content->Compile();
 
     hotspot_view->Compile();
-    QWARNING(hotspot_tab && hotspot_tab->layout(), "No hotspot tab", return );
+    QWARNING(hotspot_tab && hotspot_tab->layout(), "No hotspot tab", return);
     hotspot_tab->layout()->setSpacing(0);
     hotspot_tab->layout()->setContentsMargins(0, 0, 0, 0);
     hotspot_tab->layout()->addWidget(hotspot_view);
