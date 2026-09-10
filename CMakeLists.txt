@@ -60,6 +60,8 @@ if(RCV_ENABLE_TRACE_DECODER)
     add_compile_definitions(RCV_HAS_TRACE_DECODER)
 endif()
 
+include(RcvCore)
+
 include_directories(src)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/src)
 
@@ -74,6 +76,7 @@ set_property(
 # Configure version header
 configure_file("src/util/version.h.in" "src/util/version.h" @ONLY)
 
+if(RCV_BUILD_GUI)
 file(
     GLOB
     RCVIEWER_SOURCE_FILES
@@ -92,6 +95,7 @@ file(
     src/config/*.cpp
     src/summary/*.cpp
     src/analysis/*.cpp
+    src/code/hidden_latency_asm.cpp
     src/mainwindow.ui
     icon.qrc
     ${CMAKE_CURRENT_BINARY_DIR}/src/collection/license_data.cpp)
@@ -232,6 +236,7 @@ else()
         target_link_libraries(${PROJECT_NAME} PRIVATE rocprof-trace-decoder::rocprof-trace-decoder-static)
     endif()
 
+endif()
 endif()
 
 # clang-format target. Prefer clang-format-14 explicitly so an older generic

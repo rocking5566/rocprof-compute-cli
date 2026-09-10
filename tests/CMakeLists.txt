@@ -54,6 +54,8 @@ if(RCV_HAS_TRACE_DECODER)
     add_compile_definitions(RCV_HAS_TRACE_DECODER)
 endif()
 
+include(RcvCore)
+
 # When the decoder was fetched, extract all of its bundled datasets so the
 # att_loader_test can cross-check RCV's per-instruction aggregates against
 # the decoder's golden CSVs for every available trace.
@@ -172,3 +174,4 @@ add_subdirectory(editor)
 add_subdirectory(latency)
 add_subdirectory(markers)
 add_subdirectory(widgets)
+add_subdirectory(cli)
