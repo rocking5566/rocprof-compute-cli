@@ -133,6 +133,10 @@ TEST_F(CliRegression, EmptyWaveManifestIsReportedAsUnsupported)
 
 TEST_F(CliRegression, WriteFailurePreservesExistingDigestAndCleansTemporaryFile)
 {
+    // Keep this fixture's serialized digest above the injected file limit.
+    // Missing occupancy now correctly stays empty rather than contributing
+    // thousands of invented zero bins.
+    write(trace / "occupancy.json", R"({"0":[[100,0,0,0,1,0],[100,0,0,0,0,0]]})");
     write(output, "previous valid digest");
     auto result = run({binary(), "analyze", trace.string(), "-o", output.string(), "--bins", "2000"}, {}, 2048);
     EXPECT_EQ(result.signal, 0) << result.error;
