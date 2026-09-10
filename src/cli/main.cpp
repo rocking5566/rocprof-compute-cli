@@ -21,9 +21,13 @@
 // SOFTWARE.
 
 #include <fstream>
+#include <cerrno>
+#include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
+#include <unistd.h>
 #include "analysis/hidden_latency.h"
 #include "cli/digest.h"
 #include "cli/digest_builder.h"
@@ -35,6 +39,50 @@
 
 namespace
 {
+void validateDestination(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    const auto status = std::filesystem::symlink_status(path, ec);
+    if (ec && ec != std::errc::no_such_file_or_directory)
+        throw std::runtime_error("cannot inspect output: " + ec.message());
+    if (status.type() != std::filesystem::file_type::not_found && !std::filesystem::is_regular_file(status))
+        throw std::runtime_error("output must be a regular file, not a symlink, directory or special file");
+}
+
+void writeAtomically(const std::filesystem::path& path, const std::string& contents)
+{
+    validateDestination(path);
+    struct TemporaryFile
+    {
+        std::string path;
+        int fd = -1;
+        ~TemporaryFile()
+        {
+            if (fd >= 0) close(fd);
+            if (!path.empty()) { std::error_code ec; std::filesystem::remove(path, ec); }
+        }
+    } temp;
+    auto pattern = (path.parent_path() / ".rcv-digest-XXXXXX").string();
+    temp.fd = mkstemp(pattern.data());
+    if (temp.fd < 0) throw std::runtime_error("cannot create output temporary file: " + std::string(strerror(errno)));
+    temp.path = std::move(pattern);
+    size_t offset = 0;
+    while (offset < contents.size())
+    {
+        const auto written = write(temp.fd, contents.data() + offset, contents.size() - offset);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) throw std::runtime_error("digest write failed: " + std::string(strerror(errno)));
+        offset += static_cast<size_t>(written);
+    }
+    if (fsync(temp.fd) != 0) throw std::runtime_error("digest flush failed: " + std::string(strerror(errno)));
+    const int fd = temp.fd;
+    temp.fd = -1;
+    if (close(fd) != 0) throw std::runtime_error("digest close failed: " + std::string(strerror(errno)));
+    validateDestination(path);
+    std::filesystem::rename(temp.path, path);
+    temp.path.clear();
+}
+
 int usage()
 {
     std::cerr << "usage: rcv-cli <command> [options]\n"
@@ -121,13 +169,15 @@ int cmdAnalyze(const std::vector<std::string>& args)
 
     const auto digest = rcv::buildDigest(store, trace_path, bins);
 
-    std::ofstream out(out_path);
-    if (!out.is_open())
+    try
     {
-        std::cerr << "error: cannot write " << out_path << "\n";
+        writeAtomically(out_path, rcv::toJson(digest).dump());
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "error: cannot write " << out_path << ": " << e.what() << "\n";
         return 1;
     }
-    out << rcv::toJson(digest).dump();
 
     std::cerr << "wrote " << out_path << ": " << digest.lines.size() << " lines, " << digest.waves.size() << " waves\n";
     return 0;

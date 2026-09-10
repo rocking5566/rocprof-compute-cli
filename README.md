@@ -55,6 +55,10 @@ without publishing a digest. A capture with no waves is reported as empty/unsupp
 a valid wave with zero hidden latency is accepted. Source snapshots, counters and markers
 remain optional.
 
+Digest output is written to a temporary file in the destination directory, checked and
+closed before atomic replacement. Write failures preserve an existing digest. The output
+must be a regular file or a new filename; symlinks, directories and special files are refused.
+
 ```bash
 # once per trace (~28 s for a 1 GB capture -> ~400 KB digest)
 ./build/rcv-cli analyze <ui_output_agent_*_dispatch_*> -o digest.json

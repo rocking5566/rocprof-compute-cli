@@ -113,3 +113,35 @@ TEST_F(CliRegression, EmptyWaveManifestIsReportedAsUnsupported)
     write(trace / "filenames.json", manifest.dump());
     expectFailure();
 }
+
+TEST_F(CliRegression, WriteFailurePreservesExistingDigestAndCleansTemporaryFile)
+{
+    write(output, "previous valid digest");
+    auto result = run({binary(), "analyze", trace.string(), "-o", output.string(), "--bins", "2000"}, {}, 2048);
+    EXPECT_EQ(result.signal, 0) << result.error;
+    EXPECT_EQ(result.status, 1) << result.error;
+    EXPECT_NE(result.error.find("error:"), std::string::npos);
+    EXPECT_EQ(result.error.find("wrote "), std::string::npos);
+    EXPECT_EQ(read(output), "previous valid digest");
+    EXPECT_EQ(std::distance(fs::directory_iterator(tmp.path), fs::directory_iterator{}), 2);
+}
+
+TEST_F(CliRegression, RefusesSymlinkDestinationWithoutTouchingItsTarget)
+{
+    auto target = tmp.path / "target.json";
+    write(target, "keep target");
+    fs::create_symlink(target, output);
+    auto result = analyze();
+    EXPECT_EQ(result.status, 1) << result.error;
+    EXPECT_TRUE(fs::is_symlink(output));
+    EXPECT_EQ(read(target), "keep target");
+}
+
+TEST_F(CliRegression, ReplacesRegularDigestOnlyWithCompleteJson)
+{
+    write(output, "old digest");
+    auto result = analyze();
+    ASSERT_EQ(result.status, 0) << result.error;
+    EXPECT_EQ(json::parse(read(output)).at("meta").at("wave_count"), 1);
+    EXPECT_EQ(std::distance(fs::directory_iterator(tmp.path), fs::directory_iterator{}), 2);
+}
