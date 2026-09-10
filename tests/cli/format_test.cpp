@@ -184,3 +184,36 @@ TEST(Format, JsonRenderersProduceArrays)
     EXPECT_TRUE(rcv::asmJson(d, rcv::asmRange(d, 0, 1)).is_array());
     EXPECT_TRUE(rcv::occupancyJson(d, -1).is_object());
 }
+
+TEST(Format, SummaryJsonIncludesBinnedOccupancyWithTextParity)
+{
+    const auto d = smallDigest(); // total bins: 1, 3, 2.5, 0.5; sum 7 / 4
+    const auto result = rcv::summaryJson(d);
+    ASSERT_TRUE(result.contains("occupancy"));
+    const auto& occupancy = result.at("occupancy");
+    EXPECT_EQ(occupancy.at("basis"), "binned_total_concurrency");
+    EXPECT_EQ(occupancy.at("available"), true);
+    EXPECT_EQ(occupancy.at("bins"), 4);
+    EXPECT_DOUBLE_EQ(occupancy.at("peak_waves").get<double>(), 3.0);
+    EXPECT_DOUBLE_EQ(occupancy.at("mean_waves").get<double>(), 1.75);
+    const auto text = rcv::renderSummary(d);
+    EXPECT_NE(text.find("peak 3.0 waves, mean 1.8 waves over 4 bins"), std::string::npos) << text;
+    EXPECT_EQ(result.at("meta").at("total_lines"), 2);
+    EXPECT_EQ(result.at("meta").at("lines_with_source"), 0);
+}
+
+TEST(Format, SummaryJsonDistinguishesUnavailableFromZeroOccupancy)
+{
+    auto d = smallDigest();
+    d.occupancy.total.clear();
+    const auto missing = rcv::summaryJson(d);
+    ASSERT_TRUE(missing.contains("occupancy"));
+    EXPECT_EQ(missing.at("occupancy").at("available"), false);
+    EXPECT_TRUE(missing.at("occupancy").at("peak_waves").is_null());
+    EXPECT_TRUE(missing.at("occupancy").at("mean_waves").is_null());
+    d.occupancy.total = {0.0, 0.0, 0.0, 0.0};
+    const auto zero = rcv::summaryJson(d).at("occupancy");
+    EXPECT_EQ(zero.at("available"), true);
+    EXPECT_EQ(zero.at("peak_waves"), 0.0);
+    EXPECT_EQ(zero.at("mean_waves"), 0.0);
+}

@@ -104,6 +104,12 @@ Invalid numeric arguments return `2` before reading the trace or digest.
 `asm` requires exactly one of `--range` and `--around`; explicit `--context` is valid only
 with `--around`. Conflicting selectors return `2` before digest access.
 
+`summary --json` includes `occupancy.{available,basis,bins,peak_waves,mean_waves}`.
+The basis is `binned_total_concurrency`: peak is the maximum stored bin mean, and mean is
+the average of those equally sized time bins, matching the text summary. These are not
+instantaneous peaks. If no binned series is stored, `available` is false and both statistics
+are null. Source coverage remains in `meta.lines_with_source` and `meta.total_lines`.
+
 ### Reading the numbers
 
 ```

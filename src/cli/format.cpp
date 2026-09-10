@@ -33,6 +33,16 @@ namespace rcv
 
 namespace
 {
+// Statistics of the stored bin means, not instantaneous concurrency peaks.
+std::pair<double, double> occupancyStats(const OccupancyDigest& occupancy)
+{
+    if (occupancy.total.empty()) return {0.0, 0.0};
+    const auto peak = *std::max_element(occupancy.total.begin(), occupancy.total.end());
+    double sum = 0;
+    for (double value : occupancy.total) sum += value;
+    return {peak, sum / static_cast<double>(occupancy.total.size())};
+}
+
 bool looksNumeric(const std::string& s)
 {
     if (s.empty()) return false;
@@ -163,16 +173,14 @@ std::string renderSummary(const Digest& d)
 
     if (!d.occupancy.total.empty())
     {
-        const auto peak = *std::max_element(d.occupancy.total.begin(), d.occupancy.total.end());
-        double sum = 0;
-        for (const double v : d.occupancy.total) sum += v;
+        const auto [peak, mean] = occupancyStats(d.occupancy);
         char buf[128];
         std::snprintf(
             buf,
             sizeof(buf),
-            "\noccupancy: peak %.1f waves, mean %.1f waves over %d bins\n",
+            "\noccupancy: peak %.1f waves, mean %.1f waves over %d bins (binned means)\n",
             peak,
-            sum / static_cast<double>(d.occupancy.total.size()),
+            mean,
             d.occupancy.bins
         );
         out << buf;
@@ -196,6 +204,15 @@ nlohmann::json summaryJson(const Digest& d)
     };
     j["stall_reasons"] = stallReasonBreakdown(d);
     j["instruction_types"] = instructionTypeBreakdown(d);
+    const auto [peak, mean] = occupancyStats(d.occupancy);
+    const bool available = !d.occupancy.total.empty();
+    j["occupancy"] = {
+        {"basis", "binned_total_concurrency"},
+        {"available", available},
+        {"bins", d.occupancy.bins},
+        {"peak_waves", available ? nlohmann::json(peak) : nlohmann::json(nullptr)},
+        {"mean_waves", available ? nlohmann::json(mean) : nlohmann::json(nullptr)}
+    };
 
     auto& hot = j["top_lines"] = nlohmann::json::array();
     for (const auto& r : hotspot(d, GroupBy::Asm, SortKey::Exposed, 10))
