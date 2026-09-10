@@ -22,6 +22,13 @@ protected:
         fs::copy(fs::path(RCV_CLI_FIXTURE_DIR) / "solo", trace, fs::copy_options::recursive);
     }
     RunResult analyze() { return run({binary(), "analyze", trace.string(), "-o", output.string()}); }
+    json summaryJson()
+    {
+        auto result = run({binary(), "summary", "-d", output.string(), "--json"});
+        EXPECT_EQ(result.signal, 0) << result.error;
+        EXPECT_EQ(result.status, 0) << result.error;
+        return json::parse(result.output);
+    }
     void expectFailure()
     {
         write(output, "previous digest");
@@ -306,4 +313,38 @@ TEST_F(CliRegression, RejectsMalformedOccupancyWhenPresent)
         write(trace / "occupancy.json", contents);
         expectFailure();
     }
+}
+
+TEST_F(CliRegression, MissingAndEmptyOccupancyRemainUnavailable)
+{
+    for (const auto& occupancy : {std::string(), std::string("{}")})
+    {
+        SCOPED_TRACE(occupancy.empty() ? "missing occupancy" : "empty occupancy");
+        if (occupancy.empty())
+            fs::remove(trace / "occupancy.json");
+        else
+            write(trace / "occupancy.json", occupancy);
+        auto result = analyze();
+        ASSERT_EQ(result.status, 0) << result.error;
+        const auto digest = json::parse(read(output));
+        EXPECT_TRUE(digest.at("occupancy").at("total").empty());
+        const auto summary = summaryJson().at("occupancy");
+        EXPECT_EQ(summary.at("available"), false);
+        EXPECT_TRUE(summary.at("peak_waves").is_null());
+        EXPECT_TRUE(summary.at("mean_waves").is_null());
+    }
+}
+
+TEST_F(CliRegression, MeasuredZeroOccupancyRemainsAvailable)
+{
+    write(trace / "occupancy.json", R"({"0":[[100,0,0,0,1,0],[100,0,0,0,0,0]]})");
+    auto result = analyze();
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto digest = json::parse(read(output));
+    ASSERT_EQ(digest.at("occupancy").at("total").size(), 200u);
+    for (const auto& value : digest.at("occupancy").at("total")) EXPECT_EQ(value, 0.0);
+    const auto summary = summaryJson().at("occupancy");
+    EXPECT_EQ(summary.at("available"), true);
+    EXPECT_EQ(summary.at("peak_waves"), 0.0);
+    EXPECT_EQ(summary.at("mean_waves"), 0.0);
 }

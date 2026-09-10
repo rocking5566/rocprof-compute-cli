@@ -176,10 +176,21 @@ Digest buildDigest(const DataStore& store, const std::string& trace_path, int oc
     d.occupancy.bins = occupancy_bins;
     d.occupancy.t0 = begin;
     d.occupancy.t1 = end;
-    d.occupancy.total.assign(static_cast<size_t>(std::max(occupancy_bins, 0)), 0.0);
+
+    // An absent or present-but-empty occupancy source is unavailable, not a
+    // measured series of zero activity. Preserve that distinction as an empty
+    // total vector; nonempty records may still legitimately bin to all zeros.
+    const bool has_occupancy_records = std::any_of(
+        store.occupancy_by_se.begin(),
+        store.occupancy_by_se.end(),
+        [](const auto& entry) { return !entry.second.empty(); }
+    );
+    if (has_occupancy_records)
+        d.occupancy.total.assign(static_cast<size_t>(std::max(occupancy_bins, 0)), 0.0);
 
     for (const auto& [se, records] : store.occupancy_by_se)
     {
+        if (records.empty()) continue;
         auto series = binOccupancy(records, begin, end, occupancy_bins);
         for (size_t i = 0; i < series.size() && i < d.occupancy.total.size(); ++i) d.occupancy.total[i] += series[i];
         d.occupancy.per_se[se] = std::move(series);
