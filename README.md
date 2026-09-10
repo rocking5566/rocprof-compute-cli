@@ -3,6 +3,7 @@
 For pre-built binaries, see [releases](https://github.com/ROCm/rocprof-compute-viewer/releases), or the [GitHub Actions](https://github.com/ROCm/rocprof-compute-viewer/actions) artifacts for bleeding-edge builds.
 
 ## Table of Contents
+- [`rcv-cli` — command-line analysis](#rcv-cli--command-line-analysis)
 - [Summary](#summary)
   - [Requirements](#requirements)
 - [Rocprof Compute Viewer](#using-the-rocprof-compute-viewer)
@@ -20,6 +21,94 @@ For pre-built binaries, see [releases](https://github.com/ROCm/rocprof-compute-v
 - [Building from Source](#building-from-source)
 - [Viewing traces from the rocprofiler-sdk API](#viewing-traces-from-the-rocprofiler-sdk-api)
 - [Hidden Latency](#hidden-latency)
+
+## `rcv-cli` — command-line analysis
+
+`rcv-cli` extracts hotspot, hidden-latency and occupancy analysis from a thread trace without
+the GUI. It exists for consumption by an AI agent or a script: output is aggregated and
+bounded rather than exhaustive, so a 2500-instruction kernel becomes a report you can read in
+one sitting instead of a quarter of a million tokens.
+
+It links **no Qt at all** and builds on a machine with no Qt installed.
+
+### Building
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DTRACE_DECODER_ROOT=/opt/rocm            # omit for a JSON-only build
+cmake --build build --target rcv-cli --parallel
+```
+
+`RCV_BUILD_CLI` defaults to `ON` and `RCV_BUILD_GUI` to `OFF`. Add `-DRCV_BUILD_GUI=ON` to
+build the GUI as well; only that target needs Qt.
+
+### Two phases: analyze once, query many
+
+Hidden-latency analysis has to parse every wave file, which for a large capture means
+gigabytes and tens of seconds. `analyze` pays that cost once and writes a **digest** — a
+few hundred KB holding per-instruction aggregates, binned occupancy and a wave index. Every
+query command reads only the digest and returns in milliseconds.
+
+```bash
+# once per trace (~28 s for a 1 GB capture -> ~400 KB digest)
+./build/rcv-cli analyze <ui_output_agent_*_dispatch_*> -o digest.json
+
+# then, as often as you like
+./build/rcv-cli summary   -d digest.json
+./build/rcv-cli hotspot   -d digest.json --top 10
+./build/rcv-cli asm       -d digest.json --around 1708 --context 3
+./build/rcv-cli occupancy -d digest.json --se 0
+```
+
+If the decoder was built with a disassembly backend, raw `.att` input works too:
+
+```bash
+./build/rcv-cli analyze <dir_with_att_and_out_files> --format att -o digest.json
+```
+
+Set `LD_LIBRARY_PATH` to your ROCm `lib` directory when running `analyze`, so the decoder can
+load `libamd_comgr`.
+
+### Commands
+
+| Command | Purpose |
+|---|---|
+| `analyze <trace> [-o digest.json] [--bins N] [--format json\|att]` | Load the trace, run hidden-latency analysis, write the digest. Input format is auto-detected unless `--format` is given. |
+| `summary [-d] [--json]` | Cycle split, stall reasons, instruction-type mix, occupancy, top-10 lines, source coverage. The place to start. |
+| `hotspot [-d] [--top N] [--by asm\|source] [--sort exposed\|total\|stall\|idle] [--json]` | Ranked hotspots. Defaults to `--by asm --sort exposed --top 20`. |
+| `asm [-d] (--range A-B \| --around N [--context N]) [--json]` | Per-instruction detail for a region, with type and stall reason. |
+| `occupancy [-d] [--se N] [--json]` | Wave concurrency over time. Omit `--se` for all shader engines combined. |
+
+`-d` defaults to `digest.json`. Output is an aligned text table unless `--json` is passed;
+text costs about half the bytes of the equivalent JSON. Exit status is `0` on success, `2`
+for a usage error, `1` for a runtime failure.
+
+### Reading the numbers
+
+```
+issue   = latency - stall      total   = latency + idle
+hidden  = latency masked by other waves on the same SIMD
+exposed = total - hidden
+```
+
+**`exposed` is the default sort key, not `total`.** Latency that another wave already covers
+costs nothing to remove, so ranking by `total` points at instructions that look expensive but
+are free to fix. A line with 4.9 M total cycles of which 1.9 M are hidden is a 3.1 M problem,
+and should rank below a 3.5 M line that is fully exposed. Use `--sort total` when you want the
+unadjusted view.
+
+### What needs which capture options
+
+Three parts of the report depend on data that thread trace alone does not carry. `summary`
+reports which are present, so an empty section is explained rather than silently blank:
+
+* **Source attribution** (`hotspot --by source`, and the `source` field of `asm --json`) needs
+  the kernel built with `-g`. Without it `--by asm` is the only useful grouping, and `summary`
+  says so — e.g. `source attribution: 1/2521 (0.0%) - kernel likely built without -g`.
+* **Stall reasons** come from PC sampling. A thread-trace-only capture reports none; the stall
+  *cycles* are still attributed per instruction, so `hotspot --sort stall` still works.
+* **Raw `.att` input** needs the decoder built with a disassembly backend, otherwise it
+  produces no instructions at all. See [Trace-decoder support](#trace-decoder-support).
 
 ## Summary
 
