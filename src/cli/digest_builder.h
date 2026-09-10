@@ -29,6 +29,10 @@ class DataStore;
 
 namespace rcv
 {
+/// True when the active token list can support hidden-latency analysis, i.e.
+/// it contains both a VALU entry and a matrix entry (MATRIX/MFMA/WMMA).
+bool tokenTypesSupportHiddenLatency();
+
 /// Build a digest from a loaded store. Hidden-latency fields are populated
 /// only when store.hidden_latency_analyzed is true.
 Digest buildDigest(const DataStore& store, const std::string& trace_path, int occupancy_bins);

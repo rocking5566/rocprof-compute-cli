@@ -18,3 +18,12 @@ target_link_libraries(digest_test GTest::gtest_main rcv_core)
 add_test(NAME digest_test COMMAND digest_test)
 set_tests_properties(digest_test PROPERTIES ENVIRONMENT
     "RCV_CLI_TEST_TRACE=$ENV{RCV_CLI_TEST_TRACE};RCV_CLI_TEST_STATS_CSV=$ENV{RCV_CLI_TEST_STATS_CSV}")
+
+add_executable(hidden_latency_test hidden_latency_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest_builder.cpp)
+target_include_directories(hidden_latency_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
+target_link_libraries(hidden_latency_test GTest::gtest_main rcv_core)
+add_test(NAME hidden_latency_test COMMAND hidden_latency_test)
+set_tests_properties(hidden_latency_test PROPERTIES ENVIRONMENT
+    "RCV_CLI_TEST_TRACE=$ENV{RCV_CLI_TEST_TRACE}")

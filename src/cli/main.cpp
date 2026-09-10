@@ -24,6 +24,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include "analysis/hidden_latency.h"
 #include "cli/digest.h"
 #include "cli/digest_builder.h"
 #include "data/datastore.h"
@@ -63,6 +64,18 @@ int cmdAnalyze(const std::vector<std::string>& args)
         return 1;
     }
     for (const auto& w : load.warnings) std::cerr << "warning: " << w << "\n";
+
+    if (!rcv::tokenTypesSupportHiddenLatency())
+    {
+        std::cerr << "error: the active instruction-type list has no VALU or MATRIX entry, so "
+                     "hidden latency cannot be computed. A token_def.json in the current "
+                     "directory has replaced the built-in defaults; run from elsewhere or "
+                     "remove it.\n";
+        return 1;
+    }
+
+    if (!HiddenLatencyAnalysis::analyze(store))
+        std::cerr << "warning: hidden latency analysis failed; hidden columns will be zero\n";
 
     const auto digest = rcv::buildDigest(store, trace_path, bins);
 

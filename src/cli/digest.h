@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -43,7 +44,12 @@ struct LineDigest
     std::vector<int64_t> stallreasons;
     int64_t issue() const { return latency - stall; }
     int64_t total() const { return latency + idle; }
-    int64_t hidden() const { return hidden_idle + hidden_stall + hidden_issue; }
+    // Raw components come from two different producers and are not mutually
+    // bounded - see the spec's "Metric definitions". Clamp on read, as the GUI does.
+    int64_t hiddenIdle() const { return std::clamp<int64_t>(hidden_idle, 0, idle); }
+    int64_t hiddenStall() const { return std::clamp<int64_t>(hidden_stall, 0, stall); }
+    int64_t hiddenIssue() const { return std::clamp<int64_t>(hidden_issue, 0, issue()); }
+    int64_t hidden() const { return hiddenIdle() + hiddenStall() + hiddenIssue(); }
     int64_t exposed() const { return total() - hidden(); }
 };
 

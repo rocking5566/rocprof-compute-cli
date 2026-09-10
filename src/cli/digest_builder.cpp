@@ -30,6 +30,20 @@
 namespace rcv
 {
 
+bool tokenTypesSupportHiddenLatency()
+{
+    bool has_valu = false;
+    bool has_matrix = false;
+    for (const auto& c : Config::TokenColors())
+    {
+        if (c.name.find("VALU") != std::string::npos) has_valu = true;
+        if (c.name.find("MATRIX") != std::string::npos || c.name.find("MFMA") != std::string::npos ||
+            c.name.find("WMMA") != std::string::npos)
+            has_matrix = true;
+    }
+    return has_valu && has_matrix;
+}
+
 namespace
 {
 std::vector<std::string> namesOf(const std::vector<StyleColor>& colors)
