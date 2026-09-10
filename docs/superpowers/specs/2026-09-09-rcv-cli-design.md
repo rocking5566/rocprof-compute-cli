@@ -47,8 +47,14 @@ nicety.
 
 ### `rcv_core` static library
 
-Links `Qt6::Core` only — no Widgets, no Gui. Members are the data-layer sources already
-proven to build headlessly by `tests/att/CMakeLists.txt`:
+Links `Qt6::Core` and `Qt6::Gui` — no Widgets. `Qt6::Gui` is required because
+`src/config/config.cpp:24,27` uses `QApplication`/`QPalette`/`QColor` for theme palettes.
+Linking it is headless-safe: no display is needed unless a `QGuiApplication` is constructed,
+and `getLightPalette()` (`config.cpp:71`) uses a function-local static, so palettes are never
+initialized in a CLI run. `QColor` is a plain value type with no application requirement.
+
+Members are the data-layer sources already proven to build headlessly by
+`tests/att/CMakeLists.txt`:
 
 - `src/data/*.cpp` including `src/data/waitcnt/*.cpp`
 - `src/analysis/*.cpp`
@@ -57,21 +63,55 @@ proven to build headlessly by `tests/att/CMakeLists.txt`:
 - `src/wave/othersimd.cpp`
 - `src/util/custom_layouts.cpp`, `src/util/jsonrequest.cpp`
 
-Three changes are required to make this compile without Qt Widgets:
+Four changes are required to make this compile without Qt Widgets:
 
 1. **Break `wavemanager.h` → `graphics/canvas.h`.** `WaveInstance` pulls in the whole canvas
-   header solely for `std::vector<Canvas::WaitList> waitcnt`. Move the `WaitList` type into a
-   new plain header `src/data/waitlist_types.h`; `graphics/canvas.h` includes it instead of
-   defining it. Guard `TokenGroup::Draw(QPainter&)` with `#ifdef RCV_BUILD_GUI`.
+   header solely for `std::vector<Canvas::WaitList> waitcnt` (`wavemanager.h:31`,
+   `canvas.h:48`). Move the `WaitList` type into a new plain header
+   `src/data/waitlist_types.h`; `graphics/canvas.h` includes it instead of defining it.
+   Guard `TokenGroup::Draw(QPainter&)` (`wavemanager.cpp:173-226`) with
+   `#ifdef RCV_BUILD_GUI`. The guard must also cover `wavemanager.cpp`'s
+   `#include <QPainter>` (line 24) and `#include "mainwindow.h"` (line 29) — the latter
+   exists only for the `MainWindow::getScaling()` call at line 216, which is inside `Draw()`.
 
-2. **Extract `TraceLoader`** into `src/data/trace_loader.{h,cpp}`. Move the load
+2. **Move `applyToAsm()` out of `hidden_latency.cpp`.** That file includes `code/asmcode.h`
+   (line 32), which pulls in `QLabel`/`QPushButton`/`QWidget` (`asmcode.h:23-25`), so
+   `src/analysis` does not currently compile without Qt Widgets. Move `applyToAsm()` and
+   `clearAsmHidden()` into a new GUI-only TU (`src/code/hidden_latency_asm.cpp`, built only
+   when `RCV_BUILD_GUI`), leaving a no-op stub for CLI builds; `hidden_latency.cpp` then drops
+   the `asmcode.h` include. Note that `analyze()` calls `applyToAsm()` itself
+   (`hidden_latency.cpp:347`), so the CLI cannot simply decline to call it — the call must
+   become a no-op by construction.
+
+3. **Extract `TraceLoader`** into `src/data/trace_loader.{h,cpp}`. Move the load
    orchestration out of `MainWindow::LoadInputImpl` (`src/mainwindow.cpp:1011`):
    `detectInput()` → dispatch on `InputType` → JSON path or `TraceDecoderEmitter` → populate
-   `DataStore`. Drop all `QMessageBox`, progress-bar, and widget updates; report errors
+   `DataStore`. The emitter orchestration (lines 1138-1210) is already widget-free and is the
+   extractable core. Drop all `QMessageBox`, progress-bar, and widget updates; report errors
    through a return value. The existing `LoadInputForTests` hook shows this path already runs
    headlessly.
 
-3. **Add `rcv-cli`** under `src/cli/`, linking `rcv_core`.
+   These post-load calls are **view setup, not load logic** — they stay in `MainWindow` after
+   `TraceLoader` returns, and must not be pulled into `rcv_core`:
+   `utilization_content->SetOtherSimdRecords` (1275), marker flamegraph construction
+   (1288-1310), statusBar diagnostics (1315-1340), and `CreateWavesPlot` /
+   `CreateOccupancyPlot` / `CreateGlobalView` (1360-1375).
+
+4. **Add `rcv-cli`** under `src/cli/`, linking `rcv_core`.
+
+### The wave-load budget must not be inherited
+
+`MainWindow` refuses to load all waves when their total size exceeds
+`WAVE_LOAD_BUDGET_BYTES = 200 MB` (`mainwindow.cpp:125`). Headless, `allowFullWaveLoad`
+returns `false` without prompting (`mainwindow.cpp:782`), and hidden-latency analysis only
+runs when that flag is true (`mainwindow.cpp:1361`).
+
+The reference capture's wave JSONs total **1.02 GB**, five times the budget. A faithful
+extraction of `LoadInputImpl` would therefore **silently produce no hidden latency at all** on
+exactly the capture this tool is being built for — no error, just missing data.
+
+`TraceLoader` must not carry the budget gate. The CLI always loads all waves, and `analyze`
+fails loudly rather than degrading quietly if that is impossible.
 
 ### Build options
 
@@ -107,8 +147,26 @@ hidden   = hidden.idle + hidden.stall + hidden.issue
 exposed  = total - hidden
 ```
 
-Each `hidden.*` component is clamped to its corresponding non-hidden component, so
-`0 <= hidden <= total` and `exposed >= 0` hold by construction.
+Each `hidden.*` component is bounded by its corresponding non-hidden component because
+`compute_interval` (`hidden_latency.cpp:105-116`) intersects the utilization set with the
+token's own idle/stall/issue intervals, so `0 <= hidden <= total` and `exposed >= 0` hold.
+
+**`include_idle` is pinned to `true`.** The GUI carries this as a parameter throughout
+(`Latency::total`, `hiddenTotal`, `nonHidden` in `hotspot.hpp:31-44`) driven by the global
+`HorizontalHotspot::show_idle_time`, which defaults to `true` (`hotspot.cpp:117`). The CLI has
+no view state and nothing toggles it, so the flat formulas above are exact. If an
+`--active-only` mode is ever added, that is where `include_idle=false` and the adjusted
+formulas belong. Related defaults: `is_pcs_enabled = false` (`hotspot.cpp:115`), so the `pcs`
+half of `HorizontalHotspot` is inert for SQTT captures.
+
+### Source attribution is one-to-many, with replicated cost
+
+`ASMLine` splits `cppline` on `" -> "` and calls `add_latency()` with the **full**
+`latency_sum` / `stall_sum` / `idle_sum` for *every* frame in the chain
+(`asmcode.cpp:206-227`). This is inclusive-cost semantics: each inlined frame is charged the
+whole cost. The cost is **replicated, not divided** — an implementation that splits the
+latency among frames would disagree with the GUI. Source-line totals therefore do not sum to
+the kernel total when inlining is present.
 
 ## Command interface
 
@@ -141,14 +199,22 @@ All read the digest and complete in milliseconds.
 
 | Command | Purpose |
 |---|---|
-| `summary` | Global overview: total cycles, issue/stall/idle split, stall-reason ranking, instruction-type distribution, occupancy summary, top-10 hot source lines. The agent's entry point; fixed small size. |
-| `hotspot [--top N] [--by source\|asm] [--sort exposed\|total\|stall\|idle]` | Hotspot ranking. Defaults: `--by source --sort exposed --top 20`. |
+| `summary` | Global overview: total cycles, issue/stall/idle split, stall-reason ranking, instruction-type distribution, occupancy summary, top-10 hot ASM lines, and source-attribution coverage. The agent's entry point; fixed small size. |
+| `hotspot [--top N] [--by asm\|source] [--sort exposed\|total\|stall\|idle]` | Hotspot ranking. Defaults: `--by asm --sort exposed --top 20`. |
 | `asm --range A-B` \| `--around <index> [--context N]` | Per-instruction detail for a region, including per-line stall reasons. |
 | `occupancy [--bins N] [--se N]` | Wave concurrency over time. |
 
 **The default sort key is `exposed` (`total - hidden`), not `total`.** Latency masked by other
 waves costs nothing to fix; sorting by `total` would steer the agent toward false hotspots.
 `--sort total` remains available.
+
+**`--by asm` is the default, not `--by source`.** In the reference capture only **1 of 2,521**
+ASM lines carries a non-empty `cppline`, and that one is the kernel-name comment rather than a
+source location; there are no source snapshots in the `ui_output` directory and no `" -> "`
+chain anywhere. The kernel was built without `-g`. Defaulting to source view would hand the
+agent an empty table. `summary` therefore reports source-attribution coverage explicitly —
+e.g. `source attribution: 1/2521 lines (0.04%) — kernel likely built without -g` — so an empty
+source view is explained rather than silently blank.
 
 ### Output format
 
@@ -188,8 +254,11 @@ keys (especially `exposed`), `--top N` truncation, and bin boundaries.
 ### Layer 4 — smoke test
 
 Run `analyze` → `summary` → `hotspot` → `asm --around <top-1>` against a real trace; assert
-exit code 0 and non-empty output. Record analyze wall time and peak RSS, since the 1 GB input
-is where this tool is most likely to fail.
+exit code 0 and non-empty output. Record analyze wall time and peak RSS.
+
+Additionally assert that **total hidden latency across all lines is non-zero**. Exit code 0
+with an empty `hidden` column is precisely the failure mode the wave-load budget produces, and
+it would otherwise pass every other check in this plan.
 
 ## Development order
 
@@ -199,10 +268,16 @@ first and the decoder path is then made to match them.
 
 ## Risks
 
-- **Memory.** 128 waves × ~305k tokens is on the order of 1–2 GB resident if all waves stay
-  cached during hidden-latency analysis. `WaveInstance` already has a cache with
-  `InvalidadeCache()`; if peak RSS proves unacceptable, evict waves after each
-  `(se, simd)` scope completes, since `analyzeScoped` works one scope at a time.
+- **Silent loss of hidden latency.** The highest-severity risk, addressed above: inheriting
+  the 200 MB wave-load gate would drop analysis 4 of the 3 in scope without any error. The
+  smoke test must assert that hidden latency is non-zero on the reference capture, not merely
+  that the command exits 0.
 - **Extraction regressions.** Moving `LoadInputImpl` out of `MainWindow` risks dropping a
   step that only the GUI path performed. Layer 1's exact-equality check against the CSV is
   the guard: if a load step is missing, the totals will not match.
+- **Memory — minor.** `WaveInstance::Get` caches into an unbounded `reader_cache`
+  (`wavemanager.cpp:36,53`) that is only cleared wholesale by `InvalidadeCache()`, so all 128
+  waves stay resident through `analyze()`. That is ~940 MB of `Token` (24 bytes each,
+  `wave/token.h`) plus per-wave `line_to_clock` and `exec` vectors, so roughly 2-4 GB. The
+  target machine has 2,267 GB of RAM, so this is not a constraint. If it ever becomes one,
+  `analyzeScoped` works one `(se, simd)` scope at a time and offers a natural eviction point.
