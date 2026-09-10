@@ -87,11 +87,16 @@ std::vector<CodeData> CodeData::LoadCode(const std::string& path, bool strict)
     // Build into a local first so a mid-loop throw doesn't leave a partially-populated
     // cache stamped as valid. Per-row try/catch keeps one bad row from killing the rest.
     std::vector<CodeData> built;
+    std::set<int> strict_line_numbers;
     int row_failures = 0;
     for (auto& c : coderequest.data["code"])
     {
         try
         {
+            const int line_number = int(c[2]);
+            if (strict && !strict_line_numbers.insert(line_number).second)
+                throw std::runtime_error("duplicate LineNumber " + std::to_string(line_number));
+
             std::vector<int64_t> reasons;
             if (reasons_idx >= 0)
                 for (auto& entry : c[reasons_idx]) reasons.push_back(int64_t(entry));
@@ -100,7 +105,7 @@ std::vector<CodeData> CodeData::LoadCode(const std::string& path, bool strict)
             int64_t pcstalls = stall_idx >= 0 ? int64_t(c[stall_idx]) : 0;
 
             built.push_back(
-                {int(c[2]),
+                {line_number,
                  int(c[6]),
                  int64_t(c[5]),
                  int64_t(c[4]),

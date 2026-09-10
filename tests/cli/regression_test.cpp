@@ -74,6 +74,16 @@ TEST_F(CliRegression, RejectsPartiallyParsedCode)
     expectFailure();
 }
 
+TEST_F(CliRegression, RejectsDuplicateCodeLineIdentityAndPreservesOutput)
+{
+    auto code = json::parse(read(trace / "code.json"));
+    auto duplicate = code["code"][1];
+    duplicate[2] = 1;
+    code["code"].push_back(duplicate);
+    write(trace / "code.json", code.dump());
+    expectFailure();
+}
+
 TEST_F(CliRegression, ValidSoloWaveMayHaveZeroHiddenLatency)
 {
     auto result = analyze();
