@@ -34,13 +34,17 @@ It links **no Qt at all** and builds on a machine with no Qt installed.
 ### Building
 
 ```bash
+# JSON-only build: disable the default decoder fetch explicitly.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DTRACE_DECODER_ROOT=/opt/rocm            # omit for a JSON-only build
+  -DRCV_FETCH_TRACE_DECODER=OFF
 cmake --build build --target rcv-cli --parallel
 ```
 
 `RCV_BUILD_CLI` defaults to `ON` and `RCV_BUILD_GUI` to `OFF`. Add `-DRCV_BUILD_GUI=ON` to
-build the GUI as well; only that target needs Qt.
+build the GUI as well; only that target needs Qt. Omitting both decoder options is not a
+JSON-only configuration: CMake fetches and builds the decoder by default. For raw ATT input,
+use that default fetch or pass `-DTRACE_DECODER_ROOT=/path/to/decoder`; the decoder must have
+a disassembly backend when the capture relies on its `.out` code objects for ISA.
 
 ### Two phases: analyze once, query many
 
@@ -79,8 +83,11 @@ If the decoder was built with a disassembly backend, raw `.att` input works too:
 In a directory containing both formats, auto-detection selects `filenames.json`.
 `--format att` discovers and decodes the `.att` files instead, and fails if there are none.
 
-Set `LD_LIBRARY_PATH` to your ROCm `lib` directory when running `analyze`, so the decoder can
-load `libamd_comgr`.
+Build-tree binaries normally carry a RUNPATH for the decoder and its dependencies, so run
+them with `LD_LIBRARY_PATH` unset. If a deployment requires an override, put the intended
+disassembly-enabled decoder's `lib` directory before the ROCm runtime directory, for example
+`LD_LIBRARY_PATH=/path/to/decoder/lib:/opt/rocm/lib`. Pointing only at a different ROCm `lib`
+directory can silently select an incompatible or disassembly-disabled decoder.
 
 ### Commands
 
