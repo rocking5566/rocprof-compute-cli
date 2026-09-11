@@ -31,6 +31,9 @@ one sitting instead of a quarter of a million tokens.
 
 It links **no Qt at all** and builds on a machine with no Qt installed.
 
+For an evidence-first workflow, command examples, interpretation limits, and a
+worked FMHA case, see the [AI kernel analysis guide](docs/AI_KERNEL_ANALYSIS.md).
+
 ### Building
 
 ```bash
