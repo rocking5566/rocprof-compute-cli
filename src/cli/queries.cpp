@@ -93,7 +93,8 @@ GroupBy parseGroupBy(const std::string& s)
 {
     if (s == "asm") return GroupBy::Asm;
     if (s == "source") return GroupBy::Source;
-    throw std::invalid_argument("unknown grouping: " + s + " (expected asm|source)");
+    if (s == "opcode") return GroupBy::Opcode;
+    throw std::invalid_argument("unknown grouping: " + s + " (expected asm|source|opcode)");
 }
 
 std::vector<HotspotRow> hotspot(const Digest& d, GroupBy by, SortKey sort, int top)
@@ -119,7 +120,17 @@ std::vector<HotspotRow> hotspot(const Digest& d, GroupBy by, SortKey sort, int t
     {
         std::map<std::string, HotspotRow> by_frame;
         for (const auto& l : d.lines)
-            for (const auto& frame : sourceFrames(l.cppline))
+        {
+            std::vector<std::string> keys;
+            if (by == GroupBy::Opcode)
+            {
+                const auto begin = l.inst.find_first_not_of(" \t\r\n");
+                if (begin == std::string::npos || l.inst[begin] == ';') continue;
+                keys.push_back(l.inst.substr(begin, l.inst.find_first_of(" \t\r\n", begin) - begin));
+            }
+            else
+                keys = sourceFrames(l.cppline);
+            for (const auto& frame : keys)
             {
                 auto& r = by_frame[frame];
                 if (r.key.empty())
@@ -131,6 +142,7 @@ std::vector<HotspotRow> hotspot(const Digest& d, GroupBy by, SortKey sort, int t
                 // divide: the GUI charges each inlined frame the whole cost.
                 accumulate(r, l);
             }
+        }
         for (auto& [frame, row] : by_frame) rows.push_back(std::move(row));
     }
 

@@ -69,16 +69,38 @@ nlohmann::json toJson(const Digest& d)
         {"per_se", d.occupancy.per_se},
         {"total",  d.occupancy.total },
     };
+    if (d.occupancy.granular_present)
+    {
+        auto encode = [](const std::vector<OccupancyGroup>& groups)
+        {
+            auto rows = nlohmann::json::array();
+            for (const auto& g : groups)
+                rows.push_back({
+                    {"se",                   g.se                                                                },
+                    {"cu",                   g.cu                                                                },
+                    {"simd",                 g.simd                                                              },
+                    {"available",            g.available                                                         },
+                    {"peak_waves",           g.available ? nlohmann::json(g.peak_waves) : nlohmann::json(nullptr)},
+                    {"mean_waves",           g.available ? nlohmann::json(g.mean_waves) : nlohmann::json(nullptr)},
+                    {"wave_starts",          g.wave_starts                                                       },
+                    {"recorded_wave_starts", g.recorded_wave_starts                                              }
+                });
+            return rows;
+        };
+        j["occupancy"]["per_cu"] = encode(d.occupancy.per_cu);
+        j["occupancy"]["per_simd"] = encode(d.occupancy.per_simd);
+    }
 
     auto& waves = j["waves"] = nlohmann::json::array();
     for (const auto& w : d.waves)
         waves.push_back({
-            {"se",    w.se   },
-            {"cu",    w.cu   },
-            {"simd",  w.simd },
-            {"slot",  w.slot },
-            {"begin", w.begin},
-            {"end",   w.end  }
+            {"se",       w.se      },
+            {"cu",       w.cu      },
+            {"simd",     w.simd    },
+            {"slot",     w.slot    },
+            {"begin",    w.begin   },
+            {"end",      w.end     },
+            {"instance", w.instance}
         });
 
     return j;
@@ -137,17 +159,45 @@ Digest fromJson(const nlohmann::json& j)
         d.occupancy.t1 = o.value("t1", int64_t{0});
         d.occupancy.per_se = o.value("per_se", std::map<int, std::vector<double>>{});
         d.occupancy.total = o.value("total", std::vector<double>{});
+        d.occupancy.granular_present = o.contains("per_cu") && o.contains("per_simd");
+        if (d.occupancy.granular_present)
+        {
+            auto decode = [](const nlohmann::json& rows)
+            {
+                std::vector<OccupancyGroup> groups;
+                for (const auto& e : rows)
+                {
+                    OccupancyGroup g;
+                    g.se = e.at("se");
+                    g.cu = e.at("cu");
+                    g.simd = e.at("simd");
+                    g.available = e.at("available");
+                    g.wave_starts = e.at("wave_starts");
+                    g.recorded_wave_starts = e.value("recorded_wave_starts", int64_t{-1});
+                    if (g.available)
+                    {
+                        g.peak_waves = e.at("peak_waves");
+                        g.mean_waves = e.at("mean_waves");
+                    }
+                    groups.push_back(g);
+                }
+                return groups;
+            };
+            d.occupancy.per_cu = decode(o.at("per_cu"));
+            d.occupancy.per_simd = decode(o.at("per_simd"));
+        }
     }
 
     if (j.contains("waves"))
         for (const auto& e : j.at("waves"))
             d.waves.push_back(
                 {e.value("se", 0),
-                 e.value("cu", 0),
+                 e.value("cu", -1),
                  e.value("simd", 0),
                  e.value("slot", 0),
                  e.value("begin", int64_t{0}),
-                 e.value("end", int64_t{0})}
+                 e.value("end", int64_t{0}),
+                 e.value("instance", -1)}
             );
 
     return d;

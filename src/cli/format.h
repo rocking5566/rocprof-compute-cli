@@ -44,4 +44,8 @@ nlohmann::json asmJson(const Digest& d, const std::vector<LineDigest>& lines);
 
 std::string renderOccupancy(const Digest& d, int se);
 nlohmann::json occupancyJson(const Digest& d, int se);
+std::string renderCoverage(const Digest& d, int top);
+nlohmann::json coverageJson(const Digest& d, int top);
+nlohmann::json groupedOccupancyJson(const Digest& d, bool by_simd, int se, int cu, int simd, int top);
+std::string renderGroupedOccupancy(const nlohmann::json& result);
 } // namespace rcv

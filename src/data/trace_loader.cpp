@@ -40,7 +40,9 @@ namespace fs = std::filesystem;
 namespace rcv
 {
 
-LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceFormat force)
+LoadResult loadTrace(
+    const std::string& input_path, DataStore& store, ForceFormat force, std::optional<WaveSelection> selected
+)
 {
     LoadResult result;
 
@@ -103,8 +105,14 @@ LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceForma
                 // The GUI passes a callback that consults AppConfig and mirrors
                 // the answer into a checkbox. The CLI always loads wave states:
                 // hidden-latency analysis needs them, and there is no UI to toggle.
-                JsonRecordEmitter emitter(store.ui_dir, dispatcher, store, [](const DataStore&) { return true; }, true);
-                emitter.run();
+                JsonRecordEmitter emitter(
+                    store.ui_dir,
+                    dispatcher,
+                    store,
+                    [selected](const DataStore&) { return !selected.has_value(); },
+                    true
+                );
+                emitter.run(!selected.has_value());
                 break;
             }
             case InputType::ATT_FILES:
@@ -144,19 +152,28 @@ LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceForma
         // Load once into the shared wave cache, so later analysis cannot mistake
         // a manifest count for successfully loaded data. Empty instructions are valid.
         size_t waves = 0;
-        store.forEachWave([&](const DataStore::WaveCoordinate& coord, const WaveEntry& entry)
-        {
-            auto wave = store.getWave(entry);
-            if (!wave || !wave->load_complete)
-                throw std::runtime_error("could not load complete wave: " + entry.id);
-            // Retain metadata from this already-loaded wave; digest building
-            // remains const and never has to parse a wave just for its CU.
-            store.wave_hierarchy.at(coord.hwid.se).at(coord.hwid.simd).at(coord.hwid.slot).at(coord.instance).cu = wave->cu;
-            ++waves;
-        });
+        store.forEachWave(
+            [&](const DataStore::WaveCoordinate& coord, const WaveEntry& entry)
+            {
+                if (selected && (coord.hwid.se != selected->se || coord.hwid.simd != selected->simd ||
+                                 coord.hwid.slot != selected->slot || coord.instance != selected->instance))
+                    return;
+                auto wave = store.getWave(entry);
+                if (!wave || !wave->load_complete)
+                    throw std::runtime_error("could not load complete wave: " + entry.id);
+                if (selected && selected->cu >= 0 && selected->cu != wave->cu)
+                    throw std::runtime_error("selected wave CU mismatch (actual " + std::to_string(wave->cu) + ")");
+                // Retain metadata from this already-loaded wave; digest building
+                // remains const and never has to parse a wave just for its CU.
+                store.wave_hierarchy.at(coord.hwid.se).at(coord.hwid.simd).at(coord.hwid.slot).at(coord.instance).cu =
+                    wave->cu;
+                ++waves;
+            }
+        );
         if (waves == 0)
         {
-            result.error = "input contains no waves; empty or unsupported thread-trace capture";
+            result.error = selected ? "selected wave not found (SE/SIMD/slot/instance)"
+                                    : "input contains no waves; empty or unsupported thread-trace capture";
             return result;
         }
     }

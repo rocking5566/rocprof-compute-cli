@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -44,10 +45,23 @@ enum class ForceFormat
     AttFiles
 };
 
+struct WaveSelection
+{
+    int se = -1, simd = -1, slot = -1, instance = -1;
+    int cu = -1; // optional check, not a substitute for the wave instance
+};
+
 /// Headless trace load. Detects the input format from `input_path`, populates
-/// `store`, and always loads every wave — unlike MainWindow, which gates full
+/// `store`, and by default loads every wave — unlike MainWindow, which gates full
 /// wave loading behind a 200 MB budget and would silently skip hidden-latency
 /// analysis on large captures.
-LoadResult loadTrace(const std::string& input_path, DataStore& store, ForceFormat force = ForceFormat::Auto);
+/// A selection materializes only that wave and skips JSON marker resolution.
+/// ATT decoding stays capture-wide to preserve ASM line identities.
+LoadResult loadTrace(
+    const std::string& input_path,
+    DataStore& store,
+    ForceFormat force = ForceFormat::Auto,
+    std::optional<WaveSelection> selected = std::nullopt
+);
 
 } // namespace rcv

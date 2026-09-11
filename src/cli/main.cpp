@@ -20,21 +20,23 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include <fstream>
+#include <unistd.h>
 #include <cerrno>
 #include <charconv>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <string>
 #include <vector>
-#include <unistd.h>
 #include "analysis/hidden_latency.h"
 #include "cli/digest.h"
 #include "cli/digest_builder.h"
 #include "cli/format.h"
 #include "cli/queries.h"
+#include "cli/wait_query.h"
 #include "data/datastore.h"
 #include "data/shaderdata.h"
 #include "data/trace_loader.h"
@@ -103,10 +105,14 @@ int usage()
     std::cerr << "usage: rcv-cli <command> [options]\n"
                  "  analyze <trace_path> [-o digest.json] [--bins N] [--format json|att]\n"
                  "  summary   [-d digest.json] [--json]\n"
-                 "  hotspot   [-d digest.json] [--by asm|source] "
+                 "  hotspot   [-d digest.json] [--by asm|source|opcode] "
                  "[--sort exposed|total|stall|idle] [--top N] [--json]\n"
                  "  asm       [-d digest.json] (--range A-B | --around N [--context N]) [--json]\n"
-                 "  occupancy [-d digest.json] [--se N] [--json]\n";
+                 "  occupancy [-d digest.json] [--se N] [--json]\n"
+                 "            [--by cu|simd [--cu N] [--simd N] [--top N]]\n"
+                 "  coverage  [-d digest.json] [--top N] [--json]\n"
+                 "  wait <trace_path> --line N --se N --simd N --slot N --wave N\n"
+                 "       [--cu N] [--format json|att] [--top N] [--context N] [--json]\n";
     return 2;
 }
 
@@ -341,11 +347,129 @@ int cmdAsm(const std::vector<std::string>& args)
     return 0;
 }
 
+// Keep even C-library decoder diagnostics off the JSON output channel.
+class DiagnosticsToStderr
+{
+    int saved = -1;
+
+public:
+    DiagnosticsToStderr()
+    {
+        std::cout.flush();
+        std::fflush(stdout);
+        saved = dup(STDOUT_FILENO);
+        if (saved < 0) throw std::runtime_error("cannot save stdout");
+        if (dup2(STDERR_FILENO, STDOUT_FILENO) < 0)
+        {
+            close(saved);
+            throw std::runtime_error("cannot redirect loader diagnostics");
+        }
+    }
+    ~DiagnosticsToStderr()
+    {
+        std::cout.flush();
+        std::fflush(stdout);
+        dup2(saved, STDOUT_FILENO);
+        close(saved);
+    }
+    DiagnosticsToStderr(const DiagnosticsToStderr&) = delete;
+    DiagnosticsToStderr& operator=(const DiagnosticsToStderr&) = delete;
+};
+
+int cmdWait(const std::vector<std::string>& args)
+{
+    if (args.empty()) return usage();
+    rcv::WaveSelection selected;
+    int line = -1, top = 3, context = 3;
+    bool as_json = false;
+    auto force = rcv::ForceFormat::Auto;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const auto& option = args[i];
+        if (option == "--json")
+        {
+            as_json = true;
+            continue;
+        }
+        if (i + 1 >= args.size()) return usage();
+        const auto& value = args[++i];
+        if (option == "--format")
+        {
+            if (value == "json")
+                force = rcv::ForceFormat::JsonDir;
+            else if (value == "att")
+                force = rcv::ForceFormat::AttFiles;
+            else
+                throw UsageError("--format expects json|att");
+        }
+        else if (option == "--top")
+            top = integer(option, value, 1, 20);
+        else if (option == "--context")
+            context = integer(option, value, 0, 10);
+        else
+        {
+            int* target = nullptr;
+            if (option == "--line")
+                target = &line;
+            else if (option == "--se")
+                target = &selected.se;
+            else if (option == "--simd")
+                target = &selected.simd;
+            else if (option == "--slot")
+                target = &selected.slot;
+            else if (option == "--wave")
+                target = &selected.instance;
+            else if (option == "--cu")
+                target = &selected.cu;
+            else
+                return usage();
+            *target = integer(option, value, 0, std::numeric_limits<int>::max());
+        }
+    }
+    if (line < 0 || selected.se < 0 || selected.simd < 0 || selected.slot < 0 || selected.instance < 0)
+        throw UsageError("wait requires --line, --se, --simd, --slot and --wave (instance)");
+    nlohmann::json result;
+    {
+        DiagnosticsToStderr redirect;
+        DataStore store;
+        const auto load = rcv::loadTrace(args[0], store, force, selected);
+        if (!load.ok) throw std::runtime_error(load.error);
+        for (const auto& warning : load.warnings) std::cerr << "warning: " << warning << "\n";
+        result = rcv::queryWait(store, selected, line, top, context);
+    }
+    std::cout << (as_json ? result.dump(2) + "\n" : rcv::renderWait(result));
+    return 0;
+}
+
+int cmdCoverage(const std::vector<std::string>& args)
+{
+    std::string path = "digest.json";
+    int top = 20;
+    bool as_json = false;
+    for (size_t i = 0; i < args.size(); ++i)
+    {
+        if (args[i] == "-d" && i + 1 < args.size())
+            path = args[++i];
+        else if (args[i] == "--top" && i + 1 < args.size())
+            top = integer("--top", args[++i], 1, 1000);
+        else if (args[i] == "--json")
+            as_json = true;
+        else
+            return usage();
+    }
+    rcv::Digest digest;
+    std::string error;
+    if (!readDigest(path, digest, error)) throw std::runtime_error(error);
+    std::cout << (as_json ? rcv::coverageJson(digest, top).dump(2) + "\n" : rcv::renderCoverage(digest, top));
+    return 0;
+}
+
 int cmdOccupancy(const std::vector<std::string>& args)
 {
     std::string digest_path = "digest.json";
-    int se = -1;
-    bool as_json = false;
+    std::string by;
+    int se = -1, cu = -1, simd = -1, top = 20;
+    bool as_json = false, has_top = false;
 
     for (size_t i = 0; i < args.size(); ++i)
     {
@@ -353,11 +477,26 @@ int cmdOccupancy(const std::vector<std::string>& args)
             digest_path = args[++i];
         else if (args[i] == "--se" && i + 1 < args.size())
             se = integer("--se", args[++i], 0, std::numeric_limits<int>::max());
+        else if (args[i] == "--cu" && i + 1 < args.size())
+            cu = integer("--cu", args[++i], 0, std::numeric_limits<int>::max());
+        else if (args[i] == "--simd" && i + 1 < args.size())
+            simd = integer("--simd", args[++i], 0, std::numeric_limits<int>::max());
+        else if (args[i] == "--by" && i + 1 < args.size())
+            by = args[++i];
+        else if (args[i] == "--top" && i + 1 < args.size())
+        {
+            has_top = true;
+            top = integer("--top", args[++i], 1, 1000);
+        }
         else if (args[i] == "--json")
             as_json = true;
         else
             return usage();
     }
+
+    if (!by.empty() && by != "cu" && by != "simd") throw UsageError("--by expects cu|simd");
+    if (by.empty() && (cu >= 0 || simd >= 0 || has_top)) throw UsageError("--cu/--simd/--top require --by cu|simd");
+    if (simd >= 0 && by != "simd") throw UsageError("--simd requires --by simd");
 
     rcv::Digest digest;
     std::string error;
@@ -367,7 +506,12 @@ int cmdOccupancy(const std::vector<std::string>& args)
         return 1;
     }
 
-    if (as_json)
+    if (!by.empty())
+    {
+        const auto j = rcv::groupedOccupancyJson(digest, by == "simd", se, cu, simd, top);
+        std::cout << (as_json ? j.dump(2) + "\n" : rcv::renderGroupedOccupancy(j));
+    }
+    else if (as_json)
         std::cout << rcv::occupancyJson(digest, se).dump(2) << "\n";
     else
         std::cout << rcv::renderOccupancy(digest, se);
@@ -390,6 +534,8 @@ int main(int argc, char* argv[])
         if (command == "hotspot") return cmdHotspot(rest);
         if (command == "asm") return cmdAsm(rest);
         if (command == "occupancy") return cmdOccupancy(rest);
+        if (command == "coverage") return cmdCoverage(rest);
+        if (command == "wait") return cmdWait(rest);
 
         return usage();
     }

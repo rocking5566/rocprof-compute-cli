@@ -23,6 +23,7 @@
 #include "cli/digest_builder.h"
 
 #include <algorithm>
+#include <tuple>
 #include "code/codeload.hpp"
 #include "config/config.hpp"
 #include "data/datastore.h"
@@ -93,6 +94,38 @@ std::vector<double> binOccupancy(const std::vector<occupancy_record_t>& records,
 
 namespace
 {
+// Group deltas at identical timestamps before measuring residency. Integrate
+// only positive-length overlap with [t0,t1); validate the entire event stream.
+OccupancyGroup summarizeOccupancy(const std::map<int64_t, std::pair<int64_t, int64_t>>& events, int64_t t0, int64_t t1)
+{
+    OccupancyGroup out;
+    out.recorded_wave_starts = 0;
+    int64_t resident = 0, previous = events.empty() ? t0 : events.begin()->first;
+    long double area = 0;
+    bool valid = !events.empty() && t1 > t0;
+    for (const auto& [time, counts] : events)
+    {
+        const auto lo = std::max(previous, t0), hi = std::min(time, t1);
+        if (hi > lo)
+        {
+            area += static_cast<long double>(hi - lo) * resident;
+            out.peak_waves = std::max(out.peak_waves, resident);
+        }
+        resident += counts.first;
+        if (resident < 0) valid = false;
+        if (time >= t0 && time < t1) out.wave_starts += counts.second;
+        out.recorded_wave_starts += counts.second;
+        previous = time;
+    }
+    if (resident != 0) valid = false;
+    out.available = valid;
+    if (valid)
+        out.mean_waves = static_cast<double>(area / (t1 - t0));
+    else
+        out.peak_waves = 0;
+    return out;
+}
+
 std::vector<std::string> namesOf(const std::vector<StyleColor>& colors)
 {
     std::vector<std::string> out;
@@ -155,7 +188,9 @@ Digest buildDigest(const DataStore& store, const std::string& trace_path, int oc
     store.forEachWave(
         [&](const DataStore::WaveCoordinate& coord, const WaveEntry& entry)
         {
-            d.waves.push_back({coord.hwid.se, coord.hwid.cu, coord.hwid.simd, coord.hwid.slot, entry.begin, entry.end});
+            d.waves.push_back(
+                {coord.hwid.se, coord.hwid.cu, coord.hwid.simd, coord.hwid.slot, entry.begin, entry.end, coord.instance}
+            );
             if (first)
             {
                 begin = entry.begin;
@@ -176,6 +211,34 @@ Digest buildDigest(const DataStore& store, const std::string& trace_path, int oc
     d.occupancy.bins = occupancy_bins;
     d.occupancy.t0 = begin;
     d.occupancy.t1 = end;
+    d.occupancy.granular_present = true;
+    using Events = std::map<int64_t, std::pair<int64_t, int64_t>>;
+    std::map<std::pair<int, int>, Events> cu_events;
+    std::map<std::tuple<int, int, int>, Events> simd_events;
+    for (const auto& [se, records] : store.occupancy_by_se)
+        for (const auto& r : records)
+        {
+            const auto time = static_cast<int64_t>(r.time);
+            for (auto* events : {&cu_events[{se, r.cu}], &simd_events[{se, r.cu, r.simd}]})
+            {
+                auto& counts = (*events)[time];
+                counts.first += r.start ? 1 : -1;
+                counts.second += r.start ? 1 : 0;
+            }
+        }
+    for (const auto& [key, events] : cu_events)
+    {
+        auto g = summarizeOccupancy(events, begin, end);
+        g.se = key.first;
+        g.cu = key.second;
+        d.occupancy.per_cu.push_back(g);
+    }
+    for (const auto& [key, events] : simd_events)
+    {
+        auto g = summarizeOccupancy(events, begin, end);
+        std::tie(g.se, g.cu, g.simd) = key;
+        d.occupancy.per_simd.push_back(g);
+    }
 
     // An absent or present-but-empty occupancy source is unavailable, not a
     // measured series of zero activity. Preserve that distinction as an empty

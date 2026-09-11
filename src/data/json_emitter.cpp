@@ -292,7 +292,7 @@ ui_dir(dir), dispatcher(disp), store(st), wave_state_load_policy(std::move(load_
     if (!ui_dir.empty() && ui_dir.back() != '/') ui_dir.push_back('/');
 }
 
-void JsonRecordEmitter::run()
+void JsonRecordEmitter::run(bool resolve_markers)
 {
     store.ui_dir = ui_dir;
     emitMetadata();
@@ -306,7 +306,7 @@ void JsonRecordEmitter::run()
     emitShaderData();
     emitOtherSimd();
     store.applyRealtimeAlignment();
-    resolveMarkersFromCodeJson();
+    if (resolve_markers) resolveMarkersFromCodeJson();
     dispatcher.signalComplete();
 }
 

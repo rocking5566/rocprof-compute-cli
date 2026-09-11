@@ -51,8 +51,13 @@ disassembly backend when the capture relies on its `.out` code objects for ISA.
 
 Hidden-latency analysis has to parse every wave file, which for a large capture means
 gigabytes and tens of seconds. `analyze` pays that cost once and writes a **digest** — a
-few hundred KB holding per-instruction aggregates, binned occupancy and a wave index. Every
-query command reads only the digest and returns in milliseconds.
+compact JSON holding per-instruction aggregates, binned occupancy, CU/SIMD residency
+statistics and a wave index. Aggregate queries read only the digest. The `wait` drill-down
+is the exception: it reads the trace on demand, without hidden-latency analysis or a
+persistent per-instruction timeline cache.
+
+New digests use additive schema version 2. Version 1 remains readable, but missing wave
+instances and granular occupancy are unavailable, not zero; rerun `analyze` to populate them.
 
 `analyze` requires valid GPU metadata, a complete wave manifest and code listing, and every
 listed wave to load successfully. Decode or hidden-latency analysis failures return `1`
@@ -73,6 +78,13 @@ must be a regular file or a new filename; symlinks, directories and special file
 ./build/rcv-cli hotspot   -d digest.json --top 10
 ./build/rcv-cli asm       -d digest.json --around 1708 --context 3
 ./build/rcv-cli occupancy -d digest.json --se 0
+./build/rcv-cli hotspot   -d digest.json --by opcode --top 10
+./build/rcv-cli coverage  -d digest.json
+./build/rcv-cli occupancy -d digest.json --by simd --se 0 --cu 1
+
+# on demand: select a wave instance, not just a reused hardware slot
+./build/rcv-cli wait <trace_path> --line 1708 --se 0 --simd 3 --slot 0 --wave 0 \
+  --top 3 --context 3
 ```
 
 If the decoder was built with a disassembly backend, raw `.att` input works too:
@@ -95,28 +107,77 @@ directory can silently select an incompatible or disassembly-disabled decoder.
 | Command | Purpose |
 |---|---|
 | `analyze <trace> [-o digest.json] [--bins N] [--format json\|att]` | Load the trace, run hidden-latency analysis, write the digest. Input format is auto-detected unless `--format` is given. |
-| `summary [-d] [--json]` | Cycle split, stall reasons, instruction-type mix, occupancy, top-10 lines, source coverage. The place to start. |
-| `hotspot [-d] [--top N] [--by asm\|source] [--sort exposed\|total\|stall\|idle] [--json]` | Ranked hotspots. Defaults to `--by asm --sort exposed --top 20`. |
+| `summary [-d] [--json]` | Cycle split, stall reasons, instruction-type mix, occupancy, top-10 lines, source and instruction-traced coverage. The place to start. |
+| `hotspot [-d] [--top N] [--by asm\|source\|opcode] [--sort exposed\|total\|stall\|idle] [--json]` | Ranked hotspots. Defaults to `--by asm --sort exposed --top 20`. Opcode grouping sums line costs and skips comments/empty listings. |
 | `asm [-d] (--range A-B \| --around N [--context N]) [--json]` | Per-instruction detail for a region, with type and stall reason. |
 | `occupancy [-d] [--se N] [--json]` | Wave concurrency over time. Omit `--se` for all shader engines combined. |
+| `occupancy [-d] --by cu\|simd [--se N] [--cu N] [--simd N] [--top N] [--json]` | Exact peak and time-weighted mean resident waves over `[t0,t1)`, plus starts in that window. `--simd` requires `--by simd`. |
+| `coverage [-d] [--top N] [--json]` | Instruction-traced wave groups by SE/CU/SIMD, wave-instance ranges, known/unknown CU counts, and separate occupancy population counts. |
+| `wait <trace> --line N --se N --simd N --slot N --wave N [--cu N] [--format json\|att] [--top N] [--context N] [--json]` | Observed wait-stall distribution, bounded highest-stall occurrences with dynamic instruction contexts, and static dependency references. |
 
 `-d` defaults to `digest.json`. Output is an aligned text table unless `--json` is passed;
 text costs about half the bytes of the equivalent JSON. Exit status is `0` on success, `2`
 for a usage error, `1` for a runtime failure.
 
 Numeric arguments must be whole decimal tokens without signs or whitespace. Bounds are
-`--bins 1..4096`, `--top 1..1000`, and `--context 0..499`. ASM indices and `--se` are
+`--bins 1..4096`, aggregate `--top 1..1000`, and ASM `--context 0..499`. ASM indices and hardware selectors are
 `0..2147483647`; ranges are inclusive, ascending and limited to 1000 indices. These caps
 keep allocations and query output bounded; zero or negative `--top` never means unlimited.
 Invalid numeric arguments return `2` before reading the trace or digest.
 `asm` requires exactly one of `--range` and `--around`; explicit `--context` is valid only
 with `--around`. Conflicting selectors return `2` before digest access.
 
+`coverage` and grouped `occupancy` default to 20 rows, ordered by SE/CU/SIMD, and disclose
+the total matching groups and truncation. `--cu`, `--simd` and `--top` on `occupancy` require
+grouped mode. Encoded CU IDs are preserved (including values such as 128); they are not
+renumbered into assumed physical coordinates. Tied occupancy timestamps are combined
+before measuring peak, and pre-window events establish initial residency. Invalid,
+negative or unbalanced group event streams report unavailable statistics, not zero.
+An available group with a zero-duration start/end pair can legitimately have zero residency.
+
+Capture coverage is not hardware utilization. Instruction-traced waves and occupancy
+events can describe different populations; do not extrapolate traced-wave costs to the
+whole GPU. `coverage` reports both capture-wide `occupancy_wave_starts` and
+`occupancy_wave_starts_in_window`; only the latter shares the digest's half-open time window.
+Wave instance numbers are local to SE/SIMD/slot, not global wave identities. Each coverage
+group therefore reports `slot_count`; `instance_min`/`instance_max` aggregate those
+slot-local values across the group's slots, while `wave_count` is the total traced-wave
+count. Null ranges or identities mean unavailable. `summary --json` includes compact
+`coverage` counts and the machine-readable `instance_range_scope`.
+
 `summary --json` includes `occupancy.{available,basis,bins,peak_waves,mean_waves}`.
 The basis is `binned_total_concurrency`: peak is the maximum stored bin mean, and mean is
 the average of those equally sized time bins, matching the text summary. These are not
 instantaneous peaks. If no binned series is stored, `available` is false and both statistics
 are null. Source coverage remains in `meta.lines_with_source` and `meta.total_lines`.
+
+### Wait-site drill-down
+
+All five selectors (`--line`, `--se`, `--simd`, `--slot`, `--wave`) are required. `--wave`
+selects the instance within that SE/SIMD/slot; optional `--cu` checks its actual CU identity.
+Statistics cover **all occurrences** of the selected wait line: count, mean, population
+standard deviation, nearest-rank P95 and maximum, in cycles. A zero-stall execution is
+valid; a non-wait, missing or unexecuted line is an error.
+
+Only the highest-stall occurrences are displayed: `--top` defaults to 3, maximum 20.
+`--context` defaults to 3 preceding/following dynamic instructions, maximum 10 (zero shows
+just the selected token). At most 420 context rows and 32 unique dependency references
+are printed; truncation is explicit. Timestamps use the loader's aligned trace clock.
+JSON stdout contains only the result; loader/decoder diagnostics go to stderr.
+Stalls use full-width source instruction values, not the GUI's compact display token.
+Contexts are chronological, preserving recorded order for equal timestamps.
+
+These are **observed wait stalls, not measured memory-completion latency** or predicted
+speedup. Dependencies come from recorded JSON or gfx-specific ATT wait-counter inference;
+their provenance is included. They are static line/iteration references, not a proven
+dynamic dependency pairing for every occurrence. ATT iteration references are placeholders;
+empty dependency data is explicitly unavailable/empty.
+
+JSON input materializes only the selected wave after validating metadata/listing. Raw ATT
+still decodes the entire capture to preserve capture-wide ASM line numbering, but builds
+only the selected `WaveInstance` and skips hidden-latency analysis. This is a bounded-output
+query, not a bounded-I/O query. Keep the input and listing unchanged between queries; use
+the same capture and decoding setup as `analyze`.
 
 ### Reading the numbers
 
@@ -138,7 +199,7 @@ Three parts of the report depend on data that thread trace alone does not carry.
 reports which are present, so an empty section is explained rather than silently blank:
 
 * **Source attribution** (`hotspot --by source`, and the `source` field of `asm --json`) needs
-  the kernel built with `-g`. Without it `--by asm` is the only useful grouping, and `summary`
+  the kernel built with `-g`. Without it use `--by asm` or `--by opcode`, and `summary`
   says so — e.g. `source attribution: 1/2521 (0.0%) - kernel likely built without -g`.
 * **Stall reasons** come from PC sampling. A thread-trace-only capture reports none; the stall
   *cycles* are still attributed per instruction, so `hotspot --sort stall` still works.

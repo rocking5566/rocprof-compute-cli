@@ -135,6 +135,56 @@ TEST(AttPath, LoadsWavesAndOccupancy)
     EXPECT_TRUE(found);
 }
 
+TEST(AttPath, WaitDrilldownMatchesIndependentReferenceOnBothInputs)
+{
+    const char* json_dir = std::getenv("RCV_CLI_TEST_TRACE");
+    const char* att_dir = std::getenv("RCV_CLI_TEST_ATT_DIR");
+    if (!json_dir || !att_dir) GTEST_SKIP() << "reference paths not set";
+    ASSERT_FALSE(cli_test::binary().empty());
+    for (bool raw : {false, true})
+    {
+        const auto result = cli_test::run(
+            {cli_test::binary(),
+             "wait",
+             raw ? att_dir : json_dir,
+             "--format",
+             raw ? "att" : "json",
+             "--line",
+             "1708",
+             "--se",
+             "0",
+             "--cu",
+             "1",
+             "--simd",
+             "3",
+             "--slot",
+             "0",
+             "--wave",
+             "0",
+             "--top",
+             "1",
+             "--context",
+             "1",
+             "--json"}
+        );
+        ASSERT_EQ(result.status, 0) << result.error;
+        ASSERT_EQ(result.signal, 0);
+        const auto j = nlohmann::json::parse(result.output);
+        EXPECT_EQ(j["statistics"]["count"], 512);
+        EXPECT_DOUBLE_EQ(j["statistics"]["mean"].get<double>(), 76.908203125);
+        EXPECT_EQ(j["statistics"]["p95"], 120);
+        EXPECT_EQ(j["statistics"]["max"], 152);
+        ASSERT_EQ(j["dependencies"]["references"].size(), 2);
+        EXPECT_EQ(j["dependencies"]["references"][0]["line"], 1705);
+        EXPECT_EQ(j["dependencies"]["references"][1]["line"], 1706);
+        EXPECT_EQ(j["dependencies"]["provenance"], raw ? "inferred_att_waitcnt" : "recorded_json");
+        EXPECT_EQ(j["occurrences"][0]["context"][0]["line"], 1706);
+        EXPECT_EQ(
+            j["occurrences"][0]["clock"].get<int64_t>() - j["occurrences"][0]["context"][0]["clock"].get<int64_t>(), 1
+        );
+    }
+}
+
 TEST(AttPath, RejectsPartialDecode)
 {
     const char* att_dir = std::getenv("RCV_CLI_TEST_ATT_DIR");

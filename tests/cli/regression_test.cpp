@@ -1,11 +1,12 @@
 #include <gtest/gtest.h>
-#include "test_support.h"
 #include "analysis/hidden_latency.h"
 #include "cli/digest.h"
+#include "cli/wait_query.h"
 #include "data/datastore.h"
 #include "data/shaderdata.h"
 #include "data/trace_loader.h"
 #include "data/wavemanager.h"
+#include "test_support.h"
 
 using namespace cli_test;
 using nlohmann::json;
@@ -22,6 +23,44 @@ protected:
         fs::copy(fs::path(RCV_CLI_FIXTURE_DIR) / "solo", trace, fs::copy_options::recursive);
     }
     RunResult analyze() { return run({binary(), "analyze", trace.string(), "-o", output.string()}); }
+    void makeWaitTrace()
+    {
+        auto code = json::parse(read(trace / "code.json"));
+        code["code"][1][0] = "s_wait_dscnt 0";
+        write(trace / "code.json", code.dump());
+        auto wave = json::parse(read(trace / "se0_sm0_sl0_wv0.json"));
+        wave["wave"]["instructions"] = {
+            {100, 3, 0, 1, 1},
+            {110, 6, 0, 1, 2},
+            {120, 3, 4, 5, 1},
+            {140, 3, 8, 9, 1}
+        };
+        wave["wave"]["waitcnt"] = {
+            {1, {{2, 0}}}
+        };
+        write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+    }
+    RunResult waitQuery(std::vector<std::string> extra = {})
+    {
+        std::vector<std::string> args{
+            binary(),
+            "wait",
+            trace.string(),
+            "--line",
+            "1",
+            "--se",
+            "0",
+            "--simd",
+            "0",
+            "--slot",
+            "0",
+            "--wave",
+            "0",
+            "--json"
+        };
+        args.insert(args.end(), extra.begin(), extra.end());
+        return run(args);
+    }
     json summaryJson()
     {
         auto result = run({binary(), "summary", "-d", output.string(), "--json"});
@@ -45,6 +84,411 @@ TEST_F(CliRegression, RejectsMissingListedWave)
 {
     fs::remove(trace / "se0_sm0_sl0_wv0.json");
     expectFailure();
+}
+
+TEST_F(CliRegression, OpcodeGroupingSumsClampedLineCostsAndSkipsComments)
+{
+    write(output, R"({"version":1,"meta":{},"lines":[
+      {"i":1,"addr":100,"inst":"  s_wait_dscnt 0","hit":2,"lat":12,"stall":10,"idle":3,"hid":[9,4,0]},
+      {"i":2,"addr":200,"inst":"\ts_wait_dscnt 1","hit":3,"lat":8,"stall":6,"hid":[0,1,0]},
+      {"i":3,"inst":" ; comment","lat":999},{"i":4,"inst":"  ","lat":999}
+    ]})");
+    auto result = run({binary(), "hotspot", "-d", output.string(), "--by", "opcode", "--json"});
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto rows = json::parse(result.output);
+    ASSERT_EQ(rows.size(), 1);
+    EXPECT_EQ(rows[0]["key"], "s_wait_dscnt");
+    EXPECT_EQ(rows[0]["hitcount"], 5);
+    EXPECT_EQ(rows[0]["stall"], 16);
+    EXPECT_EQ(rows[0]["total"], 23);
+    EXPECT_EQ(rows[0]["hidden"], 8);
+    EXPECT_EQ(rows[0]["exposed"], 15);
+}
+
+TEST_F(CliRegression, CoverageBoundsRowsAndDoesNotInventOldInstanceOrCu)
+{
+    write(output, R"({"version":1,"meta":{},"lines":[],"waves":[
+      {"se":0,"cu":1,"simd":3,"slot":0},
+      {"se":0,"cu":1,"simd":3,"slot":1},
+      {"se":1,"simd":3,"slot":0}
+    ]})");
+    auto result = run({binary(), "coverage", "-d", output.string(), "--top", "1", "--json"});
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto j = json::parse(result.output);
+    EXPECT_EQ(j["instruction_traced_waves"], 3);
+    EXPECT_EQ(j["known_cu_waves"], 2);
+    EXPECT_EQ(j["unknown_cu_waves"], 1);
+    EXPECT_EQ(j["total_groups"], 2);
+    EXPECT_EQ(j["truncated"], true);
+    ASSERT_EQ(j["groups"].size(), 1);
+    EXPECT_EQ(j["groups"][0]["wave_count"], 2);
+    EXPECT_TRUE(j["groups"][0]["instance_min"].is_null());
+    EXPECT_TRUE(j["occupancy_wave_starts"].is_null());
+    EXPECT_EQ(summaryJson()["coverage"]["instruction_traced_waves"], 3);
+}
+
+TEST_F(CliRegression, NewDigestPreservesWaveInstanceForCoverage)
+{
+    ASSERT_EQ(analyze().status, 0);
+    const auto d = json::parse(read(output));
+    EXPECT_EQ(d["version"], 2);
+    ASSERT_EQ(d["waves"].size(), 1);
+    EXPECT_EQ(d["waves"][0]["instance"], 0);
+    auto result = run({binary(), "coverage", "-d", output.string(), "--json"});
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto j = json::parse(result.output);
+    EXPECT_EQ(j["groups"][0]["instance_min"], 0);
+    EXPECT_EQ(j["groups"][0]["instance_max"], 0);
+}
+
+TEST_F(CliRegression, CoverageDisclosesSlotLocalInstanceRanges)
+{
+    write(output, R"({"version":2,"meta":{},"lines":[],"waves":[
+      {"se":0,"cu":1,"simd":3,"slot":0,"instance":0},
+      {"se":0,"cu":1,"simd":3,"slot":0,"instance":1},
+      {"se":0,"cu":1,"simd":3,"slot":1,"instance":0},
+      {"se":0,"cu":1,"simd":3,"slot":1,"instance":1}
+    ]})");
+    auto result = run({binary(), "coverage", "-d", output.string(), "--json"});
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto j = json::parse(result.output);
+    ASSERT_EQ(j["groups"].size(), 1);
+    EXPECT_EQ(j["groups"][0]["wave_count"], 4);
+    EXPECT_EQ(j["groups"][0]["slot_count"], 2);
+    EXPECT_EQ(j["groups"][0]["instance_min"], 0);
+    EXPECT_EQ(j["groups"][0]["instance_max"], 1);
+    EXPECT_EQ(j["instance_range_scope"], "slot_local_values_aggregated");
+    EXPECT_NE(j["instance_range_note"].get<std::string>().find("wave_count"), std::string::npos);
+}
+
+TEST_F(CliRegression, GroupedOccupancyExactStatsAndEncodedIdentity)
+{
+    write(trace / "occupancy.json", R"({"0":[[0,129,3,0,1,0],[250,129,3,1,1,0],
+        [750,129,3,0,0,0],[1000,129,3,1,0,0]]})");
+    ASSERT_EQ(analyze().status, 0);
+    for (const auto& by : {"cu", "simd"})
+    {
+        auto result =
+            run({binary(), "occupancy", "-d", output.string(), "--by", by, "--se", "0", "--cu", "129", "--json"});
+        ASSERT_EQ(result.status, 0) << result.error;
+        const auto j = json::parse(result.output);
+        EXPECT_EQ(j["available"], true);
+        ASSERT_EQ(j["groups"].size(), 1);
+        EXPECT_EQ(j["groups"][0]["cu"], 129);
+        EXPECT_EQ(j["groups"][0]["available"], true);
+        EXPECT_EQ(j["groups"][0]["peak_waves"], 2);
+        EXPECT_EQ(j["groups"][0]["mean_waves"], 1.5);
+        EXPECT_EQ(j["groups"][0]["wave_starts"], 2);
+    }
+    EXPECT_EQ(summaryJson()["coverage"]["occupancy_wave_starts"], 2);
+}
+
+TEST_F(CliRegression, GroupedOccupancyTiesPreWindowZeroAndInvalidStreams)
+{
+    // Analyze window [100,1000). Activity before it sets initial concurrency.
+    auto manifest = json::parse(read(trace / "filenames.json"));
+    manifest["wave_filenames"]["0"]["0"]["0"]["0"][1] = 100;
+    write(trace / "filenames.json", manifest.dump());
+    auto wave = json::parse(read(trace / "se0_sm0_sl0_wv0.json"));
+    wave["wave"]["begin"] = 100;
+    write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+    write(trace / "occupancy.json", R"({"0":[
+        [0,1,0,0,1,0],[500,1,0,1,1,0],[500,1,0,0,0,0],[1000,1,0,1,0,0],
+        [1000,1,0,2,1,0],[1100,1,0,2,0,0],
+        [200,2,0,0,1,0],[200,2,0,0,0,0],
+        [200,3,0,0,0,0],[300,3,0,0,1,0],
+        [200,4,0,0,1,0]]})");
+    ASSERT_EQ(analyze().status, 0);
+    auto result = run({binary(), "occupancy", "-d", output.string(), "--by", "simd", "--json"});
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto rows = json::parse(result.output)["groups"];
+    ASSERT_EQ(rows.size(), 4);
+    EXPECT_EQ(rows[0]["peak_waves"], 1);
+    EXPECT_EQ(rows[0]["mean_waves"], 1.0);
+    EXPECT_EQ(rows[0]["wave_starts"], 1);
+    EXPECT_EQ(rows[1]["available"], true);
+    EXPECT_EQ(rows[1]["peak_waves"], 0);
+    EXPECT_EQ(rows[1]["mean_waves"], 0.0);
+    EXPECT_EQ(rows[2]["available"], false);
+    EXPECT_TRUE(rows[2]["mean_waves"].is_null());
+    EXPECT_EQ(rows[3]["available"], false);
+    EXPECT_TRUE(rows[3]["peak_waves"].is_null());
+    auto bounded = run({binary(), "occupancy", "-d", output.string(), "--by", "cu", "--top", "1", "--json"});
+    ASSERT_EQ(bounded.status, 0) << bounded.error;
+    const auto j = json::parse(bounded.output);
+    EXPECT_EQ(j["total_groups"], 4);
+    EXPECT_EQ(j["truncated"], true);
+    EXPECT_EQ(j["groups"].size(), 1);
+    EXPECT_EQ(summaryJson()["coverage"]["occupancy_wave_starts"], 6);
+    EXPECT_EQ(summaryJson()["coverage"]["occupancy_wave_starts_in_window"], 4);
+}
+
+TEST_F(CliRegression, CuOccupancyCombinesSimdsAndSimdFilterStaysLocal)
+{
+    write(trace / "occupancy.json", R"({"0":[[0,1,0,0,1,0],[0,1,1,0,1,0],
+        [500,1,0,0,0,0],[1000,1,1,0,0,0]]})");
+    ASSERT_EQ(analyze().status, 0);
+    auto cu = run({binary(), "occupancy", "-d", output.string(), "--by", "cu", "--json"});
+    ASSERT_EQ(cu.status, 0) << cu.error;
+    const auto cu_rows = json::parse(cu.output)["groups"];
+    ASSERT_EQ(cu_rows.size(), 1);
+    EXPECT_EQ(cu_rows[0]["peak_waves"], 2);
+    EXPECT_EQ(cu_rows[0]["mean_waves"], 1.5);
+    auto simd = run({binary(), "occupancy", "-d", output.string(), "--by", "simd", "--simd", "0", "--json"});
+    ASSERT_EQ(simd.status, 0) << simd.error;
+    const auto simd_rows = json::parse(simd.output)["groups"];
+    ASSERT_EQ(simd_rows.size(), 1);
+    EXPECT_EQ(simd_rows[0]["peak_waves"], 1);
+    EXPECT_EQ(simd_rows[0]["mean_waves"], 0.5);
+}
+
+TEST_F(CliRegression, OldDigestGranularOccupancyIsUnavailableNotZero)
+{
+    write(output, R"({"version":1,"meta":{},"lines":[],"occupancy":{"bins":1,"t0":0,"t1":100,"total":[1]}})");
+    auto result = run({binary(), "occupancy", "-d", output.string(), "--by", "cu", "--json"});
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto j = json::parse(result.output);
+    EXPECT_EQ(j["available"], false);
+    EXPECT_TRUE(j["groups"].empty());
+    EXPECT_NE(j["note"].get<std::string>().find("analyze"), std::string::npos);
+}
+
+TEST_F(CliRegression, NewAggregateInvalidOptionsFailBeforeDigestAccess)
+{
+    for (auto args : std::vector<std::vector<std::string>>{
+             {"coverage", "--top", "0"},
+             {"coverage", "--top", "1001"},
+             {"occupancy", "--cu", "1"},
+             {"occupancy", "--simd", "0"},
+             {"occupancy", "--by", "cu", "--simd", "0"},
+             {"occupancy", "--by", "nope"},
+             {"occupancy", "--by", "simd", "--top", "1001"},
+             {"occupancy", "--by", "simd", "--cu", "1junk"}
+    })
+    {
+        SCOPED_TRACE(::testing::PrintToString(args));
+        args.insert(args.begin(), binary());
+        args.insert(args.end(), {"-d", "/no/such/digest"});
+        const auto result = run(args);
+        EXPECT_EQ(result.status, 2) << result.error;
+        EXPECT_EQ(result.error.find("cannot read digest"), std::string::npos);
+    }
+}
+
+TEST_F(CliRegression, WaitStatisticsIncludeZeroAndBoundDynamicContext)
+{
+    makeWaitTrace();
+    auto result = waitQuery({"--top", "1", "--context", "0", "--cu", "0"});
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto j = json::parse(result.output);
+    EXPECT_EQ(j["metric"], "observed wait stall");
+    EXPECT_EQ(j["unit"], "cycles");
+    EXPECT_EQ(j["statistics"]["count"], 3);
+    EXPECT_DOUBLE_EQ(j["statistics"]["mean"].get<double>(), 4.0);
+    EXPECT_NEAR(j["statistics"]["stddev"].get<double>(), 3.265986323710904, 1e-12);
+    EXPECT_EQ(j["statistics"]["p95"], 8);
+    EXPECT_EQ(j["statistics"]["max"], 8);
+    EXPECT_EQ(j["occurrences_truncated"], true);
+    ASSERT_EQ(j["occurrences"].size(), 1);
+    EXPECT_EQ(j["occurrences"][0]["clock"], 140);
+    EXPECT_EQ(j["occurrences"][0]["iteration"], 2);
+    ASSERT_EQ(j["occurrences"][0]["context"].size(), 1);
+    EXPECT_EQ(j["occurrences"][0]["context"][0]["selected"], true);
+    EXPECT_EQ(j["dependencies"]["provenance"], "recorded_json");
+    ASSERT_EQ(j["dependencies"]["references"].size(), 1);
+    EXPECT_EQ(j["dependencies"]["references"][0]["line"], 2);
+    EXPECT_EQ(j["dependencies"]["references"][0]["iteration"], 0);
+    auto context = waitQuery({"--top", "1", "--context", "2"});
+    ASSERT_EQ(context.status, 0) << context.error;
+    const auto rows = json::parse(context.output)["occurrences"][0]["context"];
+    ASSERT_EQ(rows.size(), 3);
+    EXPECT_EQ(rows[0]["line"], 2);
+    EXPECT_EQ(rows[0]["clock"], 110);
+}
+
+TEST_F(CliRegression, WaitOnlyLoadsSelectedWaveButAnalyzeRemainsStrict)
+{
+    makeWaitTrace();
+    auto manifest = json::parse(read(trace / "filenames.json"));
+    manifest["wave_filenames"]["0"]["0"]["0"]["1"] = {"se0_sm0_sl0_wv1.json", 0, 1000};
+    write(trace / "filenames.json", manifest.dump());
+    // An unrecognized optional info value causes a diagnostic, but does not
+    // invalidate the wave. Malformed occupancy is intentionally still fatal.
+    auto wave = json::parse(read(trace / "se0_sm0_sl0_wv0.json"));
+    wave["wave"]["info"] = {
+        {"extra_label",       "not numeric"},
+        {"extra_label_stall", 0            }
+    };
+    write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+    const auto result = waitQuery();
+    ASSERT_EQ(result.status, 0) << result.error;
+    EXPECT_EQ(json::parse(result.output)["statistics"]["count"], 3);
+    EXPECT_NE(result.error.find("Invalid param"), std::string::npos);
+    expectFailure();
+}
+
+TEST_F(CliRegression, WaitRejectsWrongIdentityNonWaitMissingAndUnexecutedLines)
+{
+    makeWaitTrace();
+    for (auto args : std::vector<std::vector<std::string>>{
+             {"--cu",   "1"  },
+             {"--wave", "1"  },
+             {"--se",   "1"  },
+             {"--simd", "1"  },
+             {"--slot", "1"  },
+             {"--line", "2"  },
+             {"--line", "999"}
+    })
+    {
+        const auto result = waitQuery(args);
+        EXPECT_EQ(result.status, 1) << result.error;
+        EXPECT_TRUE(result.output.empty());
+    }
+    auto wave = json::parse(read(trace / "se0_sm0_sl0_wv0.json"));
+    wave["wave"]["instructions"] = {
+        {100, 6, 0, 1, 2}
+    };
+    write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+    EXPECT_EQ(waitQuery().status, 1);
+    wave["wave"]["instructions"] = {
+        {100, 3, 0, 1, 1}
+    };
+    wave["wave"].erase("waitcnt");
+    write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+    const auto result = waitQuery();
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto j = json::parse(result.output);
+    EXPECT_EQ(j["statistics"]["mean"], 0);
+    EXPECT_EQ(j["statistics"]["count"], 1);
+    EXPECT_EQ(j["dependencies"]["available"], false);
+    EXPECT_TRUE(j["dependencies"]["references"].empty());
+}
+
+TEST_F(CliRegression, WaitDependencyOutputIsBounded)
+{
+    makeWaitTrace();
+    auto wave = json::parse(read(trace / "se0_sm0_sl0_wv0.json"));
+    auto& deps = wave["wave"]["waitcnt"][0][1] = json::array();
+    for (int i = 0; i < 40; ++i) deps.push_back({2, i});
+    write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+    auto result = waitQuery();
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto deps_out = json::parse(result.output)["dependencies"];
+    EXPECT_EQ(deps_out["total_references"], 40);
+    EXPECT_EQ(deps_out["truncated"], true);
+    EXPECT_EQ(deps_out["references"].size(), 32);
+}
+
+TEST_F(CliRegression, WaitPreservesFullWidthStallsFromJson)
+{
+    makeWaitTrace();
+    auto wave = json::parse(read(trace / "se0_sm0_sl0_wv0.json"));
+    wave["wave"]["end"] = 200000;
+    wave["wave"]["instructions"] = {
+        {100,   3, 65536, 65537, 1},
+        {70000, 3, 70000, 70001, 1}
+    };
+    write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+    const auto result = waitQuery({"--top", "1", "--context", "1"});
+    ASSERT_EQ(result.status, 0) << result.error;
+    const auto j = json::parse(result.output);
+    EXPECT_EQ(j["statistics"]["mean"], 67768);
+    EXPECT_EQ(j["statistics"]["max"], 70000);
+    EXPECT_EQ(j["occurrences"][0]["stall"], 70000);
+    EXPECT_EQ(j["occurrences"][0]["context"][0]["stall"], 65536);
+}
+
+TEST_F(CliRegression, WaitPreservesFullWidthDecodedRecordStalls)
+{
+    makeWaitTrace();
+    DataStore store;
+    const rcv::WaveSelection selected{0, 0, 0, 0, 0};
+    ASSERT_TRUE(rcv::loadTrace(trace.string(), store, rcv::ForceFormat::JsonDir, selected).ok);
+    auto& entry = store.wave_hierarchy.at(0).at(0).at(0).at(0);
+    wave_record_t record{};
+    record.id = entry.id;
+    record.cu = 0;
+    record.begin = 0;
+    record.end = 200000;
+    record.instructions = {
+        {100,   3, 65536, 65537, 1},
+        {70000, 3, 70000, 70001, 1}
+    };
+    store.wave_records[entry.id] = record;
+    const auto j = rcv::queryWait(store, selected, 1, 1, 1);
+    EXPECT_EQ(j["statistics"]["mean"], 67768);
+    EXPECT_EQ(j["statistics"]["max"], 70000);
+    EXPECT_EQ(j["occurrences"][0]["stall"], 70000);
+    EXPECT_EQ(j["occurrences"][0]["context"][0]["stall"], 65536);
+}
+
+TEST_F(CliRegression, WaitAppliesSelectedJsonWaveTimeOffset)
+{
+    makeWaitTrace();
+    DataStore store;
+    const rcv::WaveSelection selected{0, 0, 0, 0, 0};
+    ASSERT_TRUE(rcv::loadTrace(trace.string(), store, rcv::ForceFormat::JsonDir, selected).ok);
+    store.applyTimeOffsets({
+        {0, 500}
+    });
+    const auto j = rcv::queryWait(store, selected, 1, 1, 0);
+    EXPECT_EQ(j["occurrences"][0]["clock"], 640);
+    EXPECT_EQ(j["wave"]["begin"], 500);
+    EXPECT_EQ(j["statistics"]["mean"], 4);
+}
+
+TEST_F(CliRegression, WaitNearestRankAndMaximumContextRows)
+{
+    makeWaitTrace();
+    auto wave = json::parse(read(trace / "se0_sm0_sl0_wv0.json"));
+    for (int count : {20, 21})
+    {
+        wave["wave"]["instructions"] = json::array();
+        for (int i = 0; i < count + 20; ++i)
+            wave["wave"]["instructions"].push_back(
+                {i * 30, 3, i >= 10 && i < count + 10 ? i - 10 : 0, 25, i >= 10 && i < count + 10 ? 1 : 2}
+            );
+        wave["wave"]["end"] = 2000;
+        write(trace / "se0_sm0_sl0_wv0.json", wave.dump());
+        auto result = waitQuery({"--top", "20", "--context", "10"});
+        ASSERT_EQ(result.status, 0) << result.error;
+        const auto j = json::parse(result.output);
+        EXPECT_EQ(j["statistics"]["p95"], count == 20 ? 18 : 19);
+        ASSERT_EQ(j["occurrences"].size(), 20);
+        size_t rows = 0;
+        for (const auto& hit : j["occurrences"]) rows += hit["context"].size();
+        EXPECT_EQ(rows, 420);
+    }
+}
+
+TEST_F(CliRegression, WaitValidatesRequiredSelectorsAndBoundsBeforeTraceAccess)
+{
+    const auto original = trace;
+    trace = "/no/such/trace";
+    for (const auto& option : {"--line", "--se", "--simd", "--slot", "--wave", "--cu", "--context", "--top"})
+        for (const auto& value : {"-1", "1junk", "2147483648"})
+        {
+            const auto result = waitQuery({option, value});
+            EXPECT_EQ(result.status, 2) << result.error;
+            EXPECT_EQ(result.error.find("input path"), std::string::npos);
+        }
+    for (auto args : std::vector<std::vector<std::string>>{
+             {"--top",     "0" },
+             {"--top",     "21"},
+             {"--context", "11"}
+    })
+        EXPECT_EQ(waitQuery(args).status, 2);
+    const std::vector<std::string> selectors{"--line", "--se", "--simd", "--slot", "--wave"};
+    for (const auto& missing : selectors)
+    {
+        std::vector<std::string> args{binary(), "wait", trace.string()};
+        for (const auto& option : selectors)
+            if (option != missing) args.insert(args.end(), {option, "0"});
+        const auto result = run(args);
+        EXPECT_EQ(result.status, 2) << result.error;
+        EXPECT_EQ(result.error.find("input path"), std::string::npos);
+    }
+    trace = original;
 }
 
 TEST_F(CliRegression, RejectsMalformedListedWave)

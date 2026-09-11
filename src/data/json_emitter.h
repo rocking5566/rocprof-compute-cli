@@ -39,7 +39,7 @@ public:
         WaveStateLoadPolicy wave_state_load_policy = {},
         bool strict = false
     );
-    void run();
+    void run(bool resolve_markers = true);
     void runOccupancyOnlyForTests();
 
 private:

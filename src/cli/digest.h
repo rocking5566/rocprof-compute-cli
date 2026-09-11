@@ -55,8 +55,18 @@ struct LineDigest
 
 struct WaveDigest
 {
-    int se = 0, cu = 0, simd = 0, slot = 0;
+    int se = 0, cu = -1, simd = 0, slot = 0;
     int64_t begin = 0, end = 0;
+    int instance = -1;
+};
+
+struct OccupancyGroup
+{
+    int se = 0, cu = 0, simd = -1; // -1 means aggregated across SIMD
+    bool available = false;
+    int64_t peak_waves = 0, wave_starts = 0;
+    int64_t recorded_wave_starts = -1; // capture-wide; -1 if not stored
+    double mean_waves = 0;
 };
 
 struct OccupancyDigest
@@ -65,6 +75,8 @@ struct OccupancyDigest
     int64_t t0 = 0, t1 = 0;
     std::map<int, std::vector<double>> per_se;
     std::vector<double> total;
+    bool granular_present = false;
+    std::vector<OccupancyGroup> per_cu, per_simd;
 };
 
 struct DigestMeta
@@ -79,7 +91,7 @@ struct DigestMeta
 
 struct Digest
 {
-    int version = 1;
+    int version = 2;
     DigestMeta meta;
     std::vector<std::string> type_names, stall_reason_names;
     std::vector<LineDigest> lines;

@@ -68,7 +68,10 @@ target_link_libraries(synthetic_test GTest::gtest_main rcv_core)
 add_test(NAME synthetic_test COMMAND synthetic_test)
 
 add_executable(regression_test regression_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/digest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/queries.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/format.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/cli/wait_query.cpp)
 target_include_directories(regression_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 target_compile_definitions(regression_test PRIVATE RCV_CLI_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 target_link_libraries(regression_test GTest::gtest_main rcv_core)

@@ -41,7 +41,8 @@ enum class SortKey
 enum class GroupBy
 {
     Asm,
-    Source
+    Source,
+    Opcode
 };
 
 /// One row of a hotspot ranking. For GroupBy::Asm, `key` is the ASM index as
