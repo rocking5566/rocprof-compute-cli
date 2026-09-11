@@ -185,6 +185,51 @@ TEST(AttPath, WaitDrilldownMatchesIndependentReferenceOnBothInputs)
     }
 }
 
+TEST(AttPath, WaitSummaryMatchesAcrossEightWavesAndBothInputFormats)
+{
+    const char* json_dir = std::getenv("RCV_CLI_TEST_TRACE");
+    const char* att_dir = std::getenv("RCV_CLI_TEST_ATT_DIR");
+    if (!json_dir || !att_dir) GTEST_SKIP() << "reference paths not set";
+    ASSERT_FALSE(cli_test::binary().empty());
+    nlohmann::json expected;
+    for (bool raw : {false, true})
+    {
+        const auto result = cli_test::run(
+            {cli_test::binary(),
+             "wait-summary",
+             raw ? att_dir : json_dir,
+             "--format",
+             raw ? "att" : "json",
+             "--line",
+             "1708",
+             "--se",
+             "0",
+             "--max-waves",
+             "8",
+             "--json"}
+        );
+        ASSERT_EQ(result.status, 0) << result.error;
+        ASSERT_EQ(result.signal, 0);
+        const auto j = nlohmann::json::parse(result.output);
+        EXPECT_EQ(j["matching_waves"], 8);
+        EXPECT_EQ(j["truncated"], false);
+        ASSERT_EQ(j["waves"].size(), 8);
+        EXPECT_EQ(j["waves"][0]["statistics"]["count"], 512);
+        EXPECT_DOUBLE_EQ(j["waves"][0]["statistics"]["mean"].get<double>(), 76.908203125);
+        EXPECT_EQ(j["waves"][0]["statistics"]["p95"], 120);
+        for (const auto& row : j["waves"]) EXPECT_EQ(row["statistics"]["count"], 512);
+        if (!raw)
+            expected = j;
+        else
+            for (size_t i = 0; i < j["waves"].size(); ++i)
+            {
+                EXPECT_EQ(j["waves"][i]["statistics"], expected["waves"][i]["statistics"]);
+                for (const auto* key : {"se", "cu", "simd", "slot", "instance"})
+                    EXPECT_EQ(j["waves"][i]["wave"][key], expected["waves"][i]["wave"][key]);
+            }
+    }
+}
+
 TEST(AttPath, RejectsPartialDecode)
 {
     const char* att_dir = std::getenv("RCV_CLI_TEST_ATT_DIR");
@@ -194,8 +239,9 @@ TEST(AttPath, RejectsPartialDecode)
         std::filesystem::create_symlink(entry.path(), tmp.path / entry.path().filename());
     cli_test::write(tmp.path / "999_29410_shader_engine_99_19.att", "broken ATT input");
     ASSERT_FALSE(cli_test::binary().empty());
-    const auto cli = cli_test::run({cli_test::binary(), "analyze", tmp.path.string(), "--format", "att",
-                                    "-o", (tmp.path / "digest.json").string()});
+    const auto cli = cli_test::run(
+        {cli_test::binary(), "analyze", tmp.path.string(), "--format", "att", "-o", (tmp.path / "digest.json").string()}
+    );
     EXPECT_EQ(cli.status, 1) << cli.error;
     EXPECT_EQ(cli.signal, 0);
     EXPECT_FALSE(std::filesystem::exists(tmp.path / "digest.json"));
@@ -210,8 +256,9 @@ TEST(AttPath, ForcedAttDiscoversInputsInMixedFormatDirectory)
     const char* att_dir = std::getenv("RCV_CLI_TEST_ATT_DIR");
     if (!att_dir || !*att_dir) GTEST_SKIP() << "RCV_CLI_TEST_ATT_DIR not set";
     cli_test::TempDir tmp;
-    std::filesystem::copy(std::filesystem::path(RCV_CLI_FIXTURE_DIR) / "solo", tmp.path,
-                          std::filesystem::copy_options::recursive);
+    std::filesystem::copy(
+        std::filesystem::path(RCV_CLI_FIXTURE_DIR) / "solo", tmp.path, std::filesystem::copy_options::recursive
+    );
     for (const auto& entry : std::filesystem::directory_iterator(att_dir))
     {
         auto ext = entry.path().extension();

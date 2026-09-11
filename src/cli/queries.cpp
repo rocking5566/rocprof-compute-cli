@@ -23,8 +23,8 @@
 #include "cli/queries.h"
 
 #include <algorithm>
-#include <map>
 #include <limits>
+#include <map>
 #include <stdexcept>
 
 namespace rcv
@@ -97,10 +97,8 @@ GroupBy parseGroupBy(const std::string& s)
     throw std::invalid_argument("unknown grouping: " + s + " (expected asm|source|opcode)");
 }
 
-std::vector<HotspotRow> hotspot(const Digest& d, GroupBy by, SortKey sort, int top)
+std::vector<HotspotRow> aggregateHotspots(const Digest& d, GroupBy by)
 {
-    if (top < 1 || top > MaxHotspotRows)
-        throw std::invalid_argument("top must be in [1, " + std::to_string(MaxHotspotRows) + "]");
     std::vector<HotspotRow> rows;
 
     if (by == GroupBy::Asm)
@@ -146,6 +144,14 @@ std::vector<HotspotRow> hotspot(const Digest& d, GroupBy by, SortKey sort, int t
         for (auto& [frame, row] : by_frame) rows.push_back(std::move(row));
     }
 
+    return rows;
+}
+
+std::vector<HotspotRow> hotspot(const Digest& d, GroupBy by, SortKey sort, int top)
+{
+    if (top < 1 || top > MaxHotspotRows)
+        throw std::invalid_argument("top must be in [1, " + std::to_string(MaxHotspotRows) + "]");
+    auto rows = aggregateHotspots(d, by);
     std::stable_sort(
         rows.begin(),
         rows.end(),
@@ -208,8 +214,11 @@ std::vector<LineDigest> asmAround(const Digest& d, int index, int context)
     if (context < 0) throw std::invalid_argument("context must be nonnegative");
     const int64_t first = int64_t(index) - context;
     const int64_t last = int64_t(index) + context;
-    return asmRange(d, static_cast<int>(std::max<int64_t>(first, std::numeric_limits<int>::min())),
-                    static_cast<int>(std::min<int64_t>(last, std::numeric_limits<int>::max())));
+    return asmRange(
+        d,
+        static_cast<int>(std::max<int64_t>(first, std::numeric_limits<int>::min())),
+        static_cast<int>(std::min<int64_t>(last, std::numeric_limits<int>::max()))
+    );
 }
 
 } // namespace rcv

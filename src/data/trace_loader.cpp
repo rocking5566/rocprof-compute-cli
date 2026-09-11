@@ -41,10 +41,20 @@ namespace rcv
 {
 
 LoadResult loadTrace(
-    const std::string& input_path, DataStore& store, ForceFormat force, std::optional<WaveSelection> selected
+    const std::string& input_path,
+    DataStore& store,
+    ForceFormat force,
+    std::optional<WaveSelection> selected,
+    WaveLoadMode wave_mode
 )
 {
     LoadResult result;
+    const bool deferred = wave_mode == WaveLoadMode::Deferred;
+    if (deferred && selected)
+    {
+        result.error = "deferred loading cannot also select a single wave";
+        return result;
+    }
 
     std::error_code exists_error;
     if (!fs::exists(input_path, exists_error))
@@ -53,8 +63,9 @@ LoadResult loadTrace(
         return result;
     }
 
-    const auto preferred = force == ForceFormat::JsonDir ? InputType::JSON_DIR :
-                           force == ForceFormat::AttFiles ? InputType::ATT_FILES : InputType::UNKNOWN;
+    const auto preferred = force == ForceFormat::JsonDir  ? InputType::JSON_DIR
+                         : force == ForceFormat::AttFiles ? InputType::ATT_FILES
+                                                          : InputType::UNKNOWN;
     InputInfo info = detectInput(input_path, preferred);
     if (force == ForceFormat::AttFiles && info.att_files.empty())
     {
@@ -109,10 +120,10 @@ LoadResult loadTrace(
                     store.ui_dir,
                     dispatcher,
                     store,
-                    [selected](const DataStore&) { return !selected.has_value(); },
+                    [selected, deferred](const DataStore&) { return !selected.has_value() && !deferred; },
                     true
                 );
-                emitter.run(!selected.has_value());
+                emitter.run(!selected.has_value() && !deferred);
                 break;
             }
             case InputType::ATT_FILES:
@@ -155,6 +166,11 @@ LoadResult loadTrace(
         store.forEachWave(
             [&](const DataStore::WaveCoordinate& coord, const WaveEntry& entry)
             {
+                if (deferred)
+                {
+                    ++waves;
+                    return;
+                }
                 if (selected && (coord.hwid.se != selected->se || coord.hwid.simd != selected->simd ||
                                  coord.hwid.slot != selected->slot || coord.instance != selected->instance))
                     return;

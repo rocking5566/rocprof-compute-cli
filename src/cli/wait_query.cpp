@@ -60,12 +60,80 @@ std::vector<Observation> observations(const DataStore& store, const WaveEntry& e
     }
     return result;
 }
+
+void validateIterations(const IterationRange& range)
+{
+    if (range && (range->first < 0 || range->second < range->first))
+        throw std::invalid_argument("iterations must be an ascending nonnegative inclusive range");
+}
+
+bool inRange(size_t iteration, const IterationRange& range)
+{
+    return !range ||
+           (iteration >= static_cast<size_t>(range->first) && iteration <= static_cast<size_t>(range->second));
+}
+
+nlohmann::json iterationJson(const IterationRange& range)
+{
+    return range ? nlohmann::json{range->first, range->second} : nlohmann::json(nullptr);
+}
+
+nlohmann::json waitStatistics(std::vector<int64_t> stalls)
+{
+    using nlohmann::json;
+    const size_t count = stalls.size();
+    json result = {
+        {"count",        count         },
+        {"mean",         nullptr       },
+        {"stddev",       nullptr       },
+        {"p95",          nullptr       },
+        {"max",          nullptr       },
+        {"stddev_basis", "population"  },
+        {"p95_basis",    "nearest_rank"}
+    };
+    if (!count) return result;
+    long double mean = 0, m2 = 0;
+    size_t n = 0;
+    int64_t maximum = 0;
+    for (auto stall : stalls)
+    {
+        const long double delta = stall - mean;
+        mean += delta / ++n;
+        m2 += delta * (stall - mean);
+        maximum = std::max(maximum, stall);
+    }
+    const size_t p95_index = count - count / 20 - 1;
+    std::nth_element(stalls.begin(), stalls.begin() + p95_index, stalls.end());
+    result["mean"] = static_cast<double>(mean);
+    result["stddev"] = static_cast<double>(std::sqrt(m2 / count));
+    result["p95"] = stalls[p95_index];
+    result["max"] = maximum;
+    return result;
+}
+
+std::string waitInstruction(const DataStore& store, int line)
+{
+    for (const auto& code : store.code)
+    {
+        if (!code.line || code.line->index.load() != line) continue;
+        const auto& inst = code.line->inst;
+        const auto begin = inst.find_first_not_of(" \t\r\n");
+        if (begin == std::string::npos || inst.compare(begin, 6, "s_wait") != 0)
+            throw std::runtime_error("selected ASM line is not a wait instruction");
+        return inst;
+    }
+    throw std::runtime_error("ASM line not found: " + std::to_string(line));
+}
 } // namespace
 
-nlohmann::json queryWait(DataStore& store, const WaveSelection& selected, int line, int top, int context)
+nlohmann::json queryWait(
+    DataStore& store, const WaveSelection& selected, int line, int top, int context, IterationRange iterations
+)
 {
     if (line < 0 || top < 1 || top > 20 || context < 0 || context > 10)
         throw std::invalid_argument("wait query bounds: line >= 0, top 1..20, context 0..10");
+    validateIterations(iterations);
+    const auto instruction = waitInstruction(store, line);
     const auto& entry = store.wave_hierarchy.at(selected.se).at(selected.simd).at(selected.slot).at(selected.instance);
     auto wave = store.getWave(entry);
     if (!wave || !wave->load_complete) throw std::runtime_error("selected wave is incomplete");
@@ -73,33 +141,19 @@ nlohmann::json queryWait(DataStore& store, const WaveSelection& selected, int li
     std::map<int, std::string> instructions;
     for (const auto& code : store.code)
         if (code.line) instructions.emplace(code.line->index.load(), code.line->inst);
-    const auto found = instructions.find(line);
-    if (found == instructions.end()) throw std::runtime_error("ASM line not found: " + std::to_string(line));
-    const auto begin = found->second.find_first_not_of(" \t\r\n");
-    if (begin == std::string::npos || found->second.compare(begin, 6, "s_wait") != 0)
-        throw std::runtime_error("selected ASM line is not a wait instruction");
-
     const auto tokens = observations(store, entry);
     std::vector<size_t> hits;
     std::vector<int64_t> stalls;
-    long double mean = 0, m2 = 0;
-    int64_t maximum = 0;
     for (size_t i = 0; i < tokens.size(); ++i)
     {
         const auto& token = tokens[i];
-        if (token.code_line != line) continue;
+        if (token.code_line != line || !inRange(token.iteration, iterations)) continue;
         hits.push_back(i);
         stalls.push_back(token.stall);
-        const long double delta = token.stall - mean;
-        mean += delta / hits.size();
-        m2 += delta * (token.stall - mean);
-        maximum = std::max(maximum, token.stall);
     }
-    if (hits.empty()) throw std::runtime_error("selected wait line was not executed in this wave");
+    if (hits.empty()) throw std::runtime_error("selected wait line was not executed in this wave/iteration range");
     const size_t count = hits.size();
-    const size_t p95_index = count - count / 20 - 1; // ceil(0.95*N)-1 without floating rounding
-    std::nth_element(stalls.begin(), stalls.begin() + p95_index, stalls.end());
-    const auto p95 = stalls[p95_index];
+    const auto statistics = waitStatistics(std::move(stalls));
     const size_t shown = std::min(count, static_cast<size_t>(top));
     std::partial_sort(
         hits.begin(),
@@ -164,7 +218,9 @@ nlohmann::json queryWait(DataStore& store, const WaveSelection& selected, int li
         {"unit",                  "cycles"                                                     },
         {"clock_basis",           "aligned trace cycles"                                       },
         {"line",                  line                                                         },
-        {"inst",                  found->second                                                },
+        {"inst",                  instruction                                                  },
+        {"iterations",            iterationJson(iterations)                                    },
+        {"iteration_basis",       "zero-based occurrences of selected line, inclusive range"   },
         {"wave",
          {{"se", selected.se},
           {"cu", wave->cu},
@@ -173,14 +229,7 @@ nlohmann::json queryWait(DataStore& store, const WaveSelection& selected, int li
           {"instance", selected.instance},
           {"begin", wave->WaveBegin()},
           {"end", wave->WaveEnd()}}                                                            },
-        {"statistics",
-         {{"count", count},
-          {"mean", static_cast<double>(mean)},
-          {"stddev", static_cast<double>(std::sqrt(m2 / count))},
-          {"p95", p95},
-          {"max", maximum},
-          {"stddev_basis", "population"},
-          {"p95_basis", "nearest_rank"}}                                                       },
+        {"statistics",            statistics                                                   },
         {"occurrences_truncated", count > shown                                                },
         {"occurrences",           occurrences                                                  },
         {"dependencies",
@@ -204,6 +253,7 @@ std::string renderWait(const nlohmann::json& j)
     std::ostringstream out;
     out << "line " << j["line"] << ": " << j["inst"].get<std::string>() << "\nwave: " << j["wave"].dump()
         << "\nobserved wait stall (cycles), aligned timestamps\n"
+        << "iterations: " << j["iterations"] << " (null = all; zero-based selected-line occurrences)\n"
         << j["statistics"].dump() << "\n"
         << j["note"].get<std::string>() << "\n";
     for (const auto& hit : j["occurrences"])
@@ -231,6 +281,116 @@ std::string renderWait(const nlohmann::json& j)
         << "references: " << j["dependencies"]["total_references"] << "; truncated: " << j["dependencies"]["truncated"]
         << "\n"
         << j["dependencies"]["note"].get<std::string>() << "\n";
+    return out.str();
+}
+
+nlohmann::json queryWaitSummary(
+    DataStore& store, const WaveSelection& filters, int line, int max_waves, IterationRange iterations
+)
+{
+    if (line < 0 || max_waves < 1 || max_waves > 128 || filters.cu != -1)
+        throw std::invalid_argument("wait-summary requires line >= 0, max-waves 1..128; CU filtering is unsupported");
+    validateIterations(iterations);
+    const auto instruction = waitInstruction(store, line);
+    auto rows = nlohmann::json::array();
+    size_t matching = 0, executed = 0;
+    store.forEachWave(
+        [&](const DataStore::WaveCoordinate& coord, const WaveEntry& entry)
+        {
+            if ((filters.se >= 0 && coord.hwid.se != filters.se) ||
+                (filters.simd >= 0 && coord.hwid.simd != filters.simd) ||
+                (filters.slot >= 0 && coord.hwid.slot != filters.slot) ||
+                (filters.instance >= 0 && coord.instance != filters.instance))
+                return;
+            ++matching;
+            if (rows.size() >= static_cast<size_t>(max_waves)) return;
+            const auto wave = store.getWave(entry);
+            if (!wave || !wave->load_complete) throw std::runtime_error("could not load complete wave: " + entry.id);
+            const auto tokens = observations(store, entry);
+            std::vector<int64_t> stalls;
+            size_t total_occurrences = 0;
+            for (const auto& token : tokens)
+            {
+                if (token.code_line != line) continue;
+                ++total_occurrences;
+                if (inRange(token.iteration, iterations)) stalls.push_back(token.stall);
+            }
+            const bool available = !stalls.empty();
+            if (available) ++executed;
+            rows.push_back({
+                {"wave",
+                 {{"se", coord.hwid.se},
+                  {"cu", wave->cu < 0 ? nlohmann::json(nullptr) : nlohmann::json(wave->cu)},
+                  {"simd", coord.hwid.simd},
+                  {"slot", coord.hwid.slot},
+                  {"instance", coord.instance},
+                  {"begin", wave->WaveBegin()},
+                  {"end", wave->WaveEnd()}}                            },
+                {"available",         available                        },
+                {"status",
+                 available           ? "observed"
+                 : total_occurrences ? "no_occurrences_in_range"
+                                     : "not_executed"                  },
+                {"total_occurrences", total_occurrences                },
+                {"statistics",        waitStatistics(std::move(stalls))}
+            });
+        }
+    );
+    if (!matching) throw std::runtime_error("no waves match the SE/SIMD/slot/instance filters");
+    return {
+        {"metric",                  "observed wait stall"                                                                               },
+        {"unit",                    "cycles"                                                                                            },
+        {"line",                    line                                                                                                },
+        {"inst",                    instruction                                                                                         },
+        {"iterations",              iterationJson(iterations)                                                                           },
+        {"iteration_basis",         "zero-based occurrences of selected line in each wave; inclusive, not source-loop IDs"              },
+        {"selection_order",         "SE/SIMD/slot/instance ascending; first matching waves, not a random sample"                        },
+        {"filters",                 {{"se", filters.se}, {"simd", filters.simd}, {"slot", filters.slot}, {"instance", filters.instance}}
+        },
+        {"max_waves",               max_waves                                                                                           },
+        {"matching_waves",          matching                                                                                            },
+        {"selected_waves",          rows.size()                                                                                         },
+        {"waves_with_observations", executed                                                                                            },
+        {"truncated",               matching > rows.size()                                                                              },
+        {"waves",                   rows                                                                                                },
+        {"note",
+         "Statistics cover only the selected waves and iteration range. Empty ranges/unexecuted lines have "
+         "null statistics, not measured zero. Observed stalls are not memory-completion latency or predicted "
+         "speedup. Wave instance is local to SE/SIMD/slot. Raw ATT is decoded capture-wide once per command; "
+         "output and wave materialization are bounded, raw decoding is not."                                                            }
+    };
+}
+
+std::string renderWaitSummary(const nlohmann::json& j)
+{
+    std::ostringstream out;
+    out << "line " << j["line"] << ": " << j["inst"].get<std::string>() << "\nobserved wait stall (cycles)\n"
+        << "iterations: " << j["iterations"] << " (null = all); " << j["iteration_basis"].get<std::string>() << '\n'
+        << "selection: " << j["selection_order"].get<std::string>() << '\n';
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& row : j["waves"])
+    {
+        const auto& w = row["wave"];
+        const auto& s = row["statistics"];
+        rows.push_back(
+            {w["se"].dump(),
+             w["cu"].dump(),
+             w["simd"].dump(),
+             w["slot"].dump(),
+             w["instance"].dump(),
+             s["count"].dump(),
+             s["mean"].dump(),
+             s["stddev"].dump(),
+             s["p95"].dump(),
+             s["max"].dump(),
+             row["status"]}
+        );
+    }
+    out << renderTable({"SE", "CU", "SIMD", "slot", "wave", "count", "mean", "stddev", "P95", "max", "status"}, rows)
+        << "selected " << j["selected_waves"] << '/' << j["matching_waves"]
+        << " matching waves; truncated: " << j["truncated"] << "; with observations: " << j["waves_with_observations"]
+        << '\n'
+        << j["note"].get<std::string>() << '\n';
     return out.str();
 }
 } // namespace rcv

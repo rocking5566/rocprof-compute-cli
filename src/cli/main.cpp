@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 #include "analysis/hidden_latency.h"
+#include "cli/compare.h"
 #include "cli/digest.h"
 #include "cli/digest_builder.h"
 #include "cli/format.h"
@@ -43,16 +44,21 @@
 
 namespace
 {
-struct UsageError : std::runtime_error { using std::runtime_error::runtime_error; };
+struct UsageError : std::runtime_error
+{
+    using std::runtime_error::runtime_error;
+};
 
 int integer(const std::string& option, const std::string& text, int minimum, int maximum)
 {
     int value = 0;
     const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos ||
-        parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || value < minimum || value > maximum)
-        throw UsageError(option + " expects an integer in [" + std::to_string(minimum) + ", " +
-                         std::to_string(maximum) + "]: '" + text + "'");
+    if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos || parsed.ec != std::errc{} ||
+        parsed.ptr != text.data() + text.size() || value < minimum || value > maximum)
+        throw UsageError(
+            option + " expects an integer in [" + std::to_string(minimum) + ", " + std::to_string(maximum) + "]: '" +
+            text + "'"
+        );
     return value;
 }
 
@@ -66,6 +72,16 @@ void validateDestination(const std::filesystem::path& path)
         throw std::runtime_error("output must be a regular file, not a symlink, directory or special file");
 }
 
+rcv::IterationRange iterationRange(const std::string& text)
+{
+    const auto dash = text.find('-');
+    if (dash == std::string::npos) throw UsageError("--iterations expects A-B (inclusive, zero-based)");
+    const int first = integer("--iterations start", text.substr(0, dash), 0, std::numeric_limits<int>::max());
+    const int last = integer("--iterations end", text.substr(dash + 1), 0, std::numeric_limits<int>::max());
+    if (last < first) throw UsageError("--iterations must be ascending (inclusive)");
+    return std::pair{first, last};
+}
+
 void writeAtomically(const std::filesystem::path& path, const std::string& contents)
 {
     validateDestination(path);
@@ -76,7 +92,11 @@ void writeAtomically(const std::filesystem::path& path, const std::string& conte
         ~TemporaryFile()
         {
             if (fd >= 0) close(fd);
-            if (!path.empty()) { std::error_code ec; std::filesystem::remove(path, ec); }
+            if (!path.empty())
+            {
+                std::error_code ec;
+                std::filesystem::remove(path, ec);
+            }
         }
     } temp;
     auto pattern = (path.parent_path() / ".rcv-digest-XXXXXX").string();
@@ -111,8 +131,11 @@ int usage()
                  "  occupancy [-d digest.json] [--se N] [--json]\n"
                  "            [--by cu|simd [--cu N] [--simd N] [--top N]]\n"
                  "  coverage  [-d digest.json] [--top N] [--json]\n"
+                 "  compare <before.json> <after.json> [--top N] [--json]\n"
                  "  wait <trace_path> --line N --se N --simd N --slot N --wave N\n"
-                 "       [--cu N] [--format json|att] [--top N] [--context N] [--json]\n";
+                 "       [--cu N] [--format json|att] [--top N] [--context N] [--iterations A-B] [--json]\n"
+                 "  wait-summary <trace_path> --line N [--se N] [--simd N] [--slot N] [--wave N]\n"
+                 "       [--max-waves N] [--iterations A-B] [--format json|att] [--json]\n";
     return 2;
 }
 
@@ -233,6 +256,30 @@ int cmdSummary(const std::vector<std::string>& args)
     return 0;
 }
 
+int cmdCompare(const std::vector<std::string>& args)
+{
+    if (args.size() < 2) return usage();
+    int top = 20;
+    bool as_json = false;
+    for (size_t i = 2; i < args.size(); ++i)
+    {
+        if (args[i] == "--top" && i + 1 < args.size())
+            top = integer("--top", args[++i], 1, rcv::MaxHotspotRows);
+        else if (args[i] == "--json")
+            as_json = true;
+        else
+            return usage();
+    }
+    rcv::Digest before, after;
+    std::string error;
+    if (!readDigest(args[0], before, error) || !readDigest(args[1], after, error)) throw std::runtime_error(error);
+    auto result = rcv::compareDigests(before, after, top);
+    result["before"]["digest_path"] = args[0];
+    result["after"]["digest_path"] = args[1];
+    std::cout << (as_json ? result.dump(2) + "\n" : rcv::renderCompare(result));
+    return 0;
+}
+
 int cmdHotspot(const std::vector<std::string>& args)
 {
     std::string digest_path = "digest.json";
@@ -326,10 +373,8 @@ int cmdAsm(const std::vector<std::string>& args)
             return usage();
     }
 
-    if (has_range == has_around)
-        throw UsageError("asm requires exactly one of --range A-B or --around N");
-    if (has_context && !has_around)
-        throw UsageError("--context requires --around and cannot be used with --range");
+    if (has_range == has_around) throw UsageError("asm requires exactly one of --range A-B or --around N");
+    if (has_context && !has_around) throw UsageError("--context requires --around and cannot be used with --range");
 
     rcv::Digest digest;
     std::string error;
@@ -376,11 +421,13 @@ public:
     DiagnosticsToStderr& operator=(const DiagnosticsToStderr&) = delete;
 };
 
-int cmdWait(const std::vector<std::string>& args)
+int cmdWait(const std::vector<std::string>& args, bool summary = false)
 {
     if (args.empty()) return usage();
     rcv::WaveSelection selected;
     int line = -1, top = 3, context = 3;
+    int max_waves = 16;
+    rcv::IterationRange iterations;
     bool as_json = false;
     auto force = rcv::ForceFormat::Auto;
     for (size_t i = 1; i < args.size(); ++i)
@@ -402,9 +449,13 @@ int cmdWait(const std::vector<std::string>& args)
             else
                 throw UsageError("--format expects json|att");
         }
-        else if (option == "--top")
+        else if (option == "--iterations")
+            iterations = iterationRange(value);
+        else if (option == "--max-waves" && summary)
+            max_waves = integer(option, value, 1, 128);
+        else if (option == "--top" && !summary)
             top = integer(option, value, 1, 20);
-        else if (option == "--context")
+        else if (option == "--context" && !summary)
             context = integer(option, value, 0, 10);
         else
         {
@@ -419,25 +470,28 @@ int cmdWait(const std::vector<std::string>& args)
                 target = &selected.slot;
             else if (option == "--wave")
                 target = &selected.instance;
-            else if (option == "--cu")
+            else if (option == "--cu" && !summary)
                 target = &selected.cu;
             else
                 return usage();
             *target = integer(option, value, 0, std::numeric_limits<int>::max());
         }
     }
-    if (line < 0 || selected.se < 0 || selected.simd < 0 || selected.slot < 0 || selected.instance < 0)
+    if (summary && line < 0) throw UsageError("wait-summary requires --line");
+    if (!summary && (line < 0 || selected.se < 0 || selected.simd < 0 || selected.slot < 0 || selected.instance < 0))
         throw UsageError("wait requires --line, --se, --simd, --slot and --wave (instance)");
     nlohmann::json result;
     {
         DiagnosticsToStderr redirect;
         DataStore store;
-        const auto load = rcv::loadTrace(args[0], store, force, selected);
+        const auto load = summary ? rcv::loadTrace(args[0], store, force, std::nullopt, rcv::WaveLoadMode::Deferred)
+                                  : rcv::loadTrace(args[0], store, force, selected);
         if (!load.ok) throw std::runtime_error(load.error);
         for (const auto& warning : load.warnings) std::cerr << "warning: " << warning << "\n";
-        result = rcv::queryWait(store, selected, line, top, context);
+        result = summary ? rcv::queryWaitSummary(store, selected, line, max_waves, iterations)
+                         : rcv::queryWait(store, selected, line, top, context, iterations);
     }
-    std::cout << (as_json ? result.dump(2) + "\n" : rcv::renderWait(result));
+    std::cout << (as_json ? result.dump(2) + "\n" : summary ? rcv::renderWaitSummary(result) : rcv::renderWait(result));
     return 0;
 }
 
@@ -531,11 +585,13 @@ int main(int argc, char* argv[])
 
         if (command == "analyze") return cmdAnalyze(rest);
         if (command == "summary") return cmdSummary(rest);
+        if (command == "compare") return cmdCompare(rest);
         if (command == "hotspot") return cmdHotspot(rest);
         if (command == "asm") return cmdAsm(rest);
         if (command == "occupancy") return cmdOccupancy(rest);
         if (command == "coverage") return cmdCoverage(rest);
         if (command == "wait") return cmdWait(rest);
+        if (command == "wait-summary") return cmdWait(rest, true);
 
         return usage();
     }

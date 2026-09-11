@@ -52,8 +52,8 @@ disassembly backend when the capture relies on its `.out` code objects for ISA.
 Hidden-latency analysis has to parse every wave file, which for a large capture means
 gigabytes and tens of seconds. `analyze` pays that cost once and writes a **digest** — a
 compact JSON holding per-instruction aggregates, binned occupancy, CU/SIMD residency
-statistics and a wave index. Aggregate queries read only the digest. The `wait` drill-down
-is the exception: it reads the trace on demand, without hidden-latency analysis or a
+statistics and a wave index. Aggregate queries read only the digest. The `wait` and
+`wait-summary` queries read the trace on demand, without hidden-latency analysis or a
 persistent per-instruction timeline cache.
 
 New digests use additive schema version 2. Version 1 remains readable, but missing wave
@@ -85,6 +85,11 @@ must be a regular file or a new filename; symlinks, directories and special file
 # on demand: select a wave instance, not just a reused hardware slot
 ./build/rcv-cli wait <trace_path> --line 1708 --se 0 --simd 3 --slot 0 --wave 0 \
   --top 3 --context 3
+
+# compare before/after optimization, then check whether a wait affects many waves
+./build/rcv-cli compare before.json after.json --top 10
+./build/rcv-cli wait-summary <trace_path> --line 1708 --se 0 --max-waves 8 \
+  --iterations 16-495
 ```
 
 If the decoder was built with a disassembly backend, raw `.att` input works too:
@@ -113,7 +118,9 @@ directory can silently select an incompatible or disassembly-disabled decoder.
 | `occupancy [-d] [--se N] [--json]` | Wave concurrency over time. Omit `--se` for all shader engines combined. |
 | `occupancy [-d] --by cu\|simd [--se N] [--cu N] [--simd N] [--top N] [--json]` | Exact peak and time-weighted mean resident waves over `[t0,t1)`, plus starts in that window. `--simd` requires `--by simd`. |
 | `coverage [-d] [--top N] [--json]` | Instruction-traced wave groups by SE/CU/SIMD, wave-instance ranges, known/unknown CU counts, and separate occupancy population counts. |
-| `wait <trace> --line N --se N --simd N --slot N --wave N [--cu N] [--format json\|att] [--top N] [--context N] [--json]` | Observed wait-stall distribution, bounded highest-stall occurrences with dynamic instruction contexts, and static dependency references. |
+| `compare <before.json> <after.json> [--top N] [--json]` | Opcode cost changes, raw and per traced wave, plus coverage and binned occupancy changes. |
+| `wait <trace> --line N --se N --simd N --slot N --wave N [--cu N] [--format json\|att] [--top N] [--context N] [--iterations A-B] [--json]` | Observed wait-stall distribution, bounded highest-stall occurrences with dynamic instruction contexts, and static dependency references. |
+| `wait-summary <trace> --line N [--se N] [--simd N] [--slot N] [--wave N] [--max-waves N] [--iterations A-B] [--format json\|att] [--json]` | Per-wave observed wait count/mean/stddev/P95/max, with bounded wave selection and optional iteration range. |
 
 `-d` defaults to `digest.json`. Output is an aligned text table unless `--json` is passed;
 text costs about half the bytes of the equivalent JSON. Exit status is `0` on success, `2`
@@ -155,9 +162,15 @@ are null. Source coverage remains in `meta.lines_with_source` and `meta.total_li
 
 All five selectors (`--line`, `--se`, `--simd`, `--slot`, `--wave`) are required. `--wave`
 selects the instance within that SE/SIMD/slot; optional `--cu` checks its actual CU identity.
-Statistics cover **all occurrences** of the selected wait line: count, mean, population
+Statistics cover **all occurrences** of the selected wait line (or the requested iteration range): count, mean, population
 standard deviation, nearest-rank P95 and maximum, in cycles. A zero-stall execution is
 valid; a non-wait, missing or unexecuted line is an error.
+
+`--iterations A-B` optionally restricts the occurrences used for statistics and top-wait
+selection. Bounds are inclusive, zero-based and limited to `0..2147483647`. They count
+executions of that static line in chronological order within each wave, **not source-loop
+iteration IDs**. Original occurrence numbers are retained; dynamic context may extend
+outside the selected range. A range containing no occurrences is an error for `wait`.
 
 Only the highest-stall occurrences are displayed: `--top` defaults to 3, maximum 20.
 `--context` defaults to 3 preceding/following dynamic instructions, maximum 10 (zero shows
@@ -178,6 +191,57 @@ still decodes the entire capture to preserve capture-wide ASM line numbering, bu
 only the selected `WaveInstance` and skips hidden-latency analysis. This is a bounded-output
 query, not a bounded-I/O query. Keep the input and listing unchanged between queries; use
 the same capture and decoding setup as `analyze`.
+
+### Comparing before and after
+
+`compare` reads two existing version-1 or version-2 digests without accessing either trace.
+It matches the union of **all opcode aggregates** before applying `--top` (default 20,
+maximum 1000). This permits changes to ASM line numbers/addresses across builds. Added
+and removed opcodes are labeled; their available absent-side costs are zero. Operands and individual
+static instructions are not matched across builds.
+
+Every JSON metric has `before`, `after`, `delta` and `percent`; delta means **after minus
+before**. Percent is relative to before and is null for a zero baseline. The report includes
+hits, issue/stall/idle/hidden/exposed/total costs, overall cycle totals, coverage counts,
+and the existing binned occupancy peak/mean. Opcode rows are ranked by the absolute raw
+exposed delta, with opcode-name tie breaking; if hidden analysis is unavailable on either
+side, exposed/hidden are null on that side and ranking uses stall deltas. Missing occupancy
+remains null, while an available zero remains zero. Occupancy peaks are bin means, not
+instantaneous maxima. Different bin counts are flagged; both time windows are printed.
+
+Raw costs and costs per instruction-traced wave are both provided. Normalization divides
+by the stored wave-index size, not the occupancy population; an empty index yields null.
+It does **not** correct for changed workload or sampling bias. The report flags changed
+GPU/kernel metadata and changed traced-wave populations. Existing digests lack workload
+shape and decoder provenance, so those fields are explicitly null and comparability is
+`unverified`, even when other metadata agrees. Confirm capture settings, decoder versions
+and workload externally. Attributed cycle changes are not kernel speedup; use repeated
+benchmarks of the same workload to establish that.
+
+### Wait-site summary across waves
+
+`wait-summary` requires only `--line`; omitted SE/SIMD/slot/instance selectors match all
+recorded waves. Selection is deterministic: the first matching waves in ascending
+SE/SIMD/slot/instance order. `--max-waves` defaults to 16 and accepts 1..128. Output reports
+matching and selected counts, truncation, each wave's actual CU, and per-wave statistics.
+This is a bounded selection, not a random sample or a whole-capture distribution.
+CU filtering is not offered because JSON manifests may omit CU identity until a wave is
+loaded; use SE/SIMD/slot/instance selectors and inspect the CU reported in each row.
+
+`--iterations A-B` has the same zero-based, inclusive semantics as `wait`, independently
+for each wave. Each row includes the whole-wave occurrence count and statistics for the
+requested range: count, mean, population stddev, nearest-rank P95 and max. A valid wait
+that was not executed, or has no occurrences in the range, has count 0, null statistics
+and an explicit status. Actual zero stalls have available statistics with value 0.
+Missing/non-wait lines, no matching waves, and incomplete selected waves fail the command.
+
+JSON input loads only the selected waves after manifest/listing validation. Raw ATT is
+decoded **once per command**, capture-wide to preserve ASM line identities, then only the
+bounded selection is materialized. Both modes skip hidden-latency analysis. Raw decode
+cost and the size of each individual wave are not bounded by `--max-waves`; the command
+bounds selected-wave materialization and report rows. Unselected JSON wave contents are
+not validated by this query; `analyze` continues to require every wave to load successfully.
+No per-instruction timeline cache is added to the digest.
 
 ### Reading the numbers
 
